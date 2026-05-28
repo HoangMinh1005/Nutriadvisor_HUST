@@ -1,0 +1,30 @@
+{
+  "version_tag": "v1.1.0",
+  "generated_at_utc": "2026-04-21T09:51:03.899538+00:00",
+  "inputs": {
+    "nin": "D:\\Minh\\NutriAdvisor_HUST\\data\\raw\\nin_data_raw_new.csv",
+    "kaggle": "D:\\Minh\\NutriAdvisor_HUST\\data\\raw\\nutrition.csv"
+  },
+  "row_counts": {
+    "total": 9934,
+    "by_source": {
+      "Kaggle": 8684,
+      "NIN": 1250
+    }
+  },
+  "outputs": {
+    "final_nutrients_csv": {
+      "path": "D:\\Minh\\NutriAdvisor_HUST\\data\\raw\\final_nutrients.csv",
+      "md5": "20d46c8d550add1739d57da7ef5b5aa8"
+    },
+    "final_nutrients_structured_csv": {
+      "path": "D:\\Minh\\NutriAdvisor_HUST\\data\\raw\\final_nutrients_structured.csv",
+      "md5": "ebc5160cef6aae066b4e382a4a7ad308"
+    },
+    "food_aliases_vi_csv": {
+      "path": "D:\\Minh\\NutriAdvisor_HUST\\data\\raw\\food_aliases_vi.csv",
+      "md5": "d8ec79b5e34ce79a86e3d37bbf654ac7"
+    }
+  },
+  "notes": "NIN is canonical; Kaggle is supplement-only. EN-first canonical key with VI alias layer."
+}
