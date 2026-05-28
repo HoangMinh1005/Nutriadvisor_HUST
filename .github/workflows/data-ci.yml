@@ -39,7 +39,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r backend/requirements.txt
           pip install -r requirements-test.txt
           pip install flake8 black isort
 
@@ -80,7 +80,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r backend/requirements.txt
           pip install -r requirements-test.txt
 
       - name: Run unit tests
@@ -92,6 +92,7 @@ jobs:
 
       - name: Upload unit test coverage
         uses: codecov/codecov-action@v3
+        continue-on-error: true
         with:
           files: ./coverage.xml
           flags: unittests
@@ -134,19 +135,21 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r backend/requirements.txt
           pip install -r requirements-test.txt
 
       - name: Run migrations
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
         run: |
-          python data/scripts/run_migrations.py \
-            --database-url "${{ env.DATABASE_URL }}"
+          python data/scripts/run_migrations.py
 
       - name: Load structured data to DB
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
         run: |
           python data/scripts/load_structured_to_db.py \
-            --version-tag v1.1.0 \
-            --database-url "${{ env.DATABASE_URL }}"
+            --version-tag v1.1.0
 
       - name: Run integration tests
         run: |
@@ -158,6 +161,7 @@ jobs:
 
       - name: Upload integration test coverage
         uses: codecov/codecov-action@v3
+        continue-on-error: true
         with:
           files: ./coverage.xml
           flags: integration
@@ -192,7 +196,21 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          pip install -r backend/requirements.txt
+          pip install -r requirements-test.txt
+
+      - name: Run migrations
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          python data/scripts/run_migrations.py
+
+      - name: Load structured data to DB
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+        run: |
+          python data/scripts/load_structured_to_db.py \
+            --version-tag v1.1.0
 
       - name: Start FastAPI backend
         env:
@@ -243,14 +261,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download coverage reports
-        uses: actions/download-artifact@v3
-        continue-on-error: true
-
-      - name: Merge coverage reports
+      - name: Summarize coverage status
         run: |
-          echo "Coverage reports downloaded"
-          # Coverage merging would happen here if artifacts were uploaded
+          echo "Coverage is uploaded directly by the test jobs via Codecov."
+          echo "This job only reports overall pipeline status."
 
       - name: Comment PR with coverage
         uses: actions/github-script@v6
