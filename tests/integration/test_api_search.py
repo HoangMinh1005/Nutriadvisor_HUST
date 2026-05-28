@@ -82,7 +82,7 @@ class TestFoodSearchEndpoint:
     def test_search_with_empty_query(self, http_client):
         """Empty search query should be handled gracefully."""
         response = http_client.get("/foods/search?q=")
-        assert response.status_code in [200, 400]  # Either empty results or bad request
+        assert response.status_code in [200, 400, 422]  # FastAPI validation may return 422
 
     def test_search_case_insensitive(self, http_client):
         """Search should be case insensitive."""
