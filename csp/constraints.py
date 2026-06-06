@@ -156,11 +156,13 @@ class NutrientConstraints:
         total_cost = sum(food_costs)
         # Nới lỏng budget nếu cần thiết trong relaxation mode
         allowed_budget = self.budget_vnd_max * tolerance_multiplier
-        # Sàn ngân sách 50% ở mức cơ bản để tránh quá rẻ, và tắt hoàn toàn khi nới lỏng (relaxation)
+        # Sàn ngân sách 55% ở mức cơ bản để tránh quá rẻ, và tắt hoàn toàn khi nới lỏng (relaxation)
         if tolerance_multiplier > 1.0:
             min_budget = 0.0
         else:
-            min_budget = self.budget_vnd_max * 0.40
+            # Tỷ lệ điều chỉnh sàn ngân sách theo calo mục tiêu để tránh vô nghiệm khi ăn ít calo
+            cal_scale = min(1.0, self.daily_calorie_target / 2000.0)
+            min_budget = self.budget_vnd_max * 0.55 * cal_scale
         return min_budget <= total_cost <= allowed_budget
 
 

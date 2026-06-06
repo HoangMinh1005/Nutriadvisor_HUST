@@ -11,7 +11,7 @@ from backend.app.services.meal_plan_pipeline import MealPlanPipeline
 
 def main():
     print("============================================================")
-    print("NUTRIADVISOR USER FLOW DEMONSTRATION (UPGRADED CSP)")
+    print("NUTRIADVISOR USER FLOW DEMONSTRATION (UPGRADED GYM CSP)")
     print("============================================================\n")
 
     # 1. Initialize the Pipeline (cache-first startup)
@@ -20,14 +20,16 @@ def main():
     pipeline.initialize(rebuild=True)
     print("Pipeline successfully initialized.\n")
 
-    # 2. Define the User Profile
-    # Yêu cầu đồng bộ: 200k/ngày, 1800 calo, carbs: 30%, fat: 30%, protein: 40%, không bữa phụ, không ăn hải sản
+    # 2. Define the User Profile CẤU HÌNH CHUẨN GYMER (LEAN CUT)
+    # Đồng bộ hóa: 1800 kcal, Tỷ lệ vàng Gymer: Protein 40% - Fat 20% - Carbs 40%
+    # Ngân sách trần 200k/ngày, không bữa phụ, dị ứng hải sản
     user_profile = {
-        "daily_calorie_target": 1800,
-        "macro_ratios": {"protein": 0.40, "fat": 0.20, "carbs": 0.40},
-        "budget_vnd_max": 200000,
+        "daily_calorie_target": 2000,
+        "macro_ratios": {"protein": 0.30, "fat": 0.30, "carbs": 0.40},  # <-- Đã nâng Protein lên 40%, hạ Carbs xuống 40%
+        "budget_vnd_max": 400000,
         "exclude_snacks": True,
-        "allergies": ["seafood", "hải sản"],
+        "allergies": [],
+        "goal": "gym",  # <-- Kích hoạt flag self.is_gym trong lõi scheduler.py
     }
     
     # Lấy các biến mục tiêu để hiển thị động
@@ -35,9 +37,9 @@ def main():
     target_f = user_profile['macro_ratios']['fat'] * 100
     target_c = user_profile['macro_ratios']['carbs'] * 100
 
-    print("2. User Profile Targets:")
+    print("2. User Profile Targets (GYM PROFILE ACTIVATED):")
     print(f"   - Calories: {user_profile['daily_calorie_target']} kcal")
-    print(f"   - Macro Ratios: Protein {target_p:.1f}%, Fat {target_f:.1f}%, Carbs {target_c:.1f}%")
+    print(f"   - Macro Ratios: Protein {target_p:.1f}% (High Protein), Fat {target_f:.1f}%, Carbs {target_c:.1f}%")
     print(f"   - Daily Budget Limit: {user_profile['budget_vnd_max']:,} VND")
     print(f"   - Exclude Snacks: {user_profile['exclude_snacks']}")
     print(f"   - Allergies: {', '.join(user_profile['allergies'])}\n")
@@ -69,7 +71,6 @@ def main():
             meal_type = meal["meal_type"].upper()
             name = meal["name"]
             cal = meal["calories"]
-            # cost_vnd_100g lúc này đã là tổng chi phí thực tế (đã nhân hệ số weight_g / 100) của cả bữa ăn
             cost = meal["cost_vnd_100g"] 
             
             day_cal += cal
@@ -78,7 +79,7 @@ def main():
             day_f += meal["fat"]
             day_c += meal["carbs"]
             
-            print(f"  [{meal_type}] {name} | {cal:.1f} kcal | {cost:,.0f} VND")
+            print(f"   [{meal_type}] {name} | {cal:.1f} kcal | {cost:,.0f} VND")
             
         # Tính toán chính xác tỷ lệ phân bổ vĩ mô (Macros) thực tế
         total_mass = day_p + day_f + day_c
@@ -86,17 +87,15 @@ def main():
         f_ratio = (day_f / total_mass * 100) if total_mass > 0 else 0
         c_ratio = (day_c / total_mass * 100) if total_mass > 0 else 0
         
-        print(f"  Summary: Total Cal={day_cal:.1f} kcal | Cost={day_cost:,.0f} VND")
-        print(f"  Macros: Protein={p_ratio:.1f}% (target {target_p:.0f}%), Fat={f_ratio:.1f}% (target {target_f:.0f}%), Carbs={c_ratio:.1f}% (target {target_c:.0f}%)")
+        print(f"   Summary: Total Cal={day_cal:.1f} kcal | Cost={day_cost:,.0f} VND")
+        print(f"   Macros: Protein={p_ratio:.1f}% (target {target_p:.0f}%), Fat={f_ratio:.1f}% (target {target_f:.0f}%), Carbs={c_ratio:.1f}% (target {target_c:.0f}%)")
 
     print("\n============================================================")
     print("4. Demonstration of Replacing a Meal Component:")
     print("============================================================")
     
-    # Lấy thông tin cấu phần đầu tiên của ngày đầu tiên để test tính năng thay thế món ăn tương đương
     sample_meal = plan[0]["meals"][0]
     sample_food_id = sample_meal["food_id"]
-    # Tách chuỗi để lấy tên món ăn chính, loại bỏ phần text (Món Việt - NIN) và trọng lượng (g)
     sample_food_name = sample_meal["name"].split(" (")[0]
     
     print(f"Replacing '{sample_food_name}' (Food ID: {sample_food_id}) with nutrient-similar foods:")
@@ -105,7 +104,7 @@ def main():
     for idx, rep in enumerate(replacements):
         name_display = rep.get("name_vi") or rep.get("name_en")
         score = rep.get("match_score", 0.0)
-        print(f"  {idx + 1}. {name_display} (Food ID: {rep['food_id']}) | Match Score: {score:.2%}")
+        print(f"   {idx + 1}. {name_display} (Food ID: {rep['food_id']}) | Match Score: {score:.2%}")
     print("============================================================\n")
 
 

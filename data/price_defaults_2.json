@@ -3,11 +3,11 @@
   "summary": {
     "source": "VDD",
     "schema_version": 2,
-    "total_source_records": 853,
-    "total_items": 853,
-    "unique_canonical_keys": 842,
-    "unique_names": 852,
-    "unique_source_ids": 853,
+    "total_source_records": 854,
+    "total_items": 854,
+    "unique_canonical_keys": 843,
+    "unique_names": 853,
+    "unique_source_ids": 854,
     "global_average_100g": 12500,
     "category_count": 43
   },
@@ -129,6 +129,13 @@
       "name_vi": "Gạo, trắng, tẻ, xát máy, sống",
       "canonical_key": "rice_white_polished_raw",
       "price_100g": 1700,
+      "category": "tinh_bột"
+    },
+    {
+      "source_id": "1004002",
+      "name_vi": "Cơm chín",
+      "canonical_key": "rice_white_polished_cooked",
+      "price_100g": 5000,
       "category": "tinh_bột"
     },
     {
@@ -4188,42 +4195,42 @@
       "source_id": "7007",
       "name_vi": "Thịt bồ câu, cả con non (ra ràng), tươi",
       "canonical_key": "pigeon_young_bird_raw",
-      "price_100g": 120000,
+      "price_100g": 12000,
       "category": "thịt_gia_cầm"
     },
     {
       "source_id": "7008",
       "name_vi": "Thịt chó, sấn, tươi",
       "canonical_key": "dog_lean_and_fat_meat_raw",
-      "price_100g": 100000,
+      "price_100g": 10000,
       "category": "thịt_đỏ"
     },
     {
       "source_id": "7009",
       "name_vi": "Thịt chó, vai, tươi",
       "canonical_key": "dog_shoulder_lean_and_fat_meat_raw",
-      "price_100g": 110000,
+      "price_100g": 11000,
       "category": "thịt_đỏ"
     },
     {
       "source_id": "7010",
       "name_vi": "Thịt cừu, nạc, tươi",
       "canonical_key": "mutton_lean_meat_raw",
-      "price_100g": 170000,
+      "price_100g": 17000,
       "category": "thịt_đỏ"
     },
     {
       "source_id": "7011",
       "name_vi": "Thịt dê, nạc, tươi",
       "canonical_key": "goat_lean_meat_raw",
-      "price_100g": 140000,
+      "price_100g": 14000,
       "category": "thịt_đỏ"
     },
     {
       "source_id": "7011003",
       "name_vi": "Thịt dê, nạc, hấp",
       "canonical_key": "goat_meat_lean_steamed",
-      "price_100g": 150000,
+      "price_100g": 15000,
       "category": "thịt_đỏ"
     },
     {
@@ -6048,6 +6055,10 @@
       },
       "rice_white_polished_raw": {
         "price_100g": 1700,
+        "category": "tinh_bột"
+      },
+      "rice_white_polished_cooked": {
+        "price_100g": 5000,
         "category": "tinh_bột"
       },
       "chocolate_drink_packaged": {
@@ -9422,6 +9433,10 @@
       },
       "Gạo, trắng, tẻ, xát máy, sống": {
         "price_100g": 1700,
+        "category": "tinh_bột"
+      },
+      "Cơm chín": {
+        "price_100g": 5000,
         "category": "tinh_bột"
       },
       "Sữa đặc có đường, Việt Nam": {
@@ -12883,6 +12898,13 @@
         "name_vi": "Gạo, trắng, tẻ, xát máy, sống",
         "canonical_key": "rice_white_polished_raw",
         "price_100g": 1700,
+        "category": "tinh_bột"
+      },
+      "1004002": {
+        "source_id": "1004002",
+        "name_vi": "Cơm chín",
+        "canonical_key": "rice_white_polished_cooked",
+        "price_100g": 5000,
         "category": "tinh_bột"
       },
       "10047": {

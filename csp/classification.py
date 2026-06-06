@@ -21,6 +21,10 @@ def get_dynamic_tags(food: Dict[str, Any]) -> Set[str]:
     name_en = food.get("canonical_name_en") or food.get("name_en") or ""
     cat = food.get("category") or ""
     
+    calories = float(food.get("energy_kcal") or food.get("calories") or 0.0)
+    protein = float(food.get("protein_g") or food.get("protein") or 0.0)
+    carbs = float(food.get("carbs_g") or food.get("carbs") or 0.0)
+    
     n_vi = _normalize_for_matching(name_vi)
     n_en = _normalize_for_matching(name_en)
     n_cat = _normalize_for_matching(cat)
@@ -28,20 +32,21 @@ def get_dynamic_tags(food: Dict[str, Any]) -> Set[str]:
     def has_any(keywords: list[str]) -> bool:
         for kw in keywords:
             kw_norm = _normalize_for_matching(kw)
-            for t in (n_vi, n_en, n_cat):
-                if f" {kw_norm} " in f" {t} ":
-                    return True
+            if f" {kw_norm} " in f" {n_vi} " or f" {kw_norm} " in f" {n_en} " or f" {kw_norm} " in f" {n_cat} ":
+                return True
         return False
 
     def has_any_name(keywords: list[str]) -> bool:
         for kw in keywords:
             kw_norm = _normalize_for_matching(kw)
-            for t in (n_vi, n_en):
-                if f" {kw_norm} " in f" {t} ":
-                    return True
+            if f" {kw_norm} " in f" {n_vi} " or f" {kw_norm} " in f" {n_en} ":
+                return True
         return False
 
     tags = set()
+
+    # Từ khóa mỳ xào/bún xào tinh bột thay thế
+    starch_sub_kws = ["mỳ xào", "mì xào", "bún xào", "miến xào", "nui xào", "bánh đa xào", "fried noodle"]
 
     # 1. Allergens
     seafood_kws = ["cá", "tôm", "cua", "hải sản", "seafood", "fish", "shrimp", "crab", "salmon", "tuna", "herring", "mackerel", "mực", "bạch tuộc", "sò", "hàu", "nghêu", "ốc", "hến", "sứa", "chả cá"]
@@ -91,36 +96,25 @@ def get_dynamic_tags(food: Dict[str, Any]) -> Set[str]:
 
     # 2. Roles
     protein_cats = ["gia_cam", "thit_do", "hai_san", "trung", "sua_che_pham", "thịt gia cầm", "gia cầm", "thịt đỏ", "hải sản", "trứng", "sữa và chế phẩm", "sữa"]
-    protein_kws = ["chicken", "gà", "beef", "bò", "pork", "heo", "fish", "cá", "salmon", "hồi", "duck", "vịt", "egg", "trứng", "yolk", "lòng đỏ", "egg white", "egg whites", "lòng trắng", "salami", "bacon", "turkey", "shrimp", "tôm", "crab", "cua", "cheese", "phô mai", "yogurt", "sữa chua"]
+    protein_kws = ["chicken", "gà", "beef", "bò", "pork", "heo", "fish", "cá", "salmon", "hồi", "duck", "vịt", "egg", "trứng", "yolk", "lòng đỏ", "egg white", "egg whites", "lòng trắng", "salami", "bacon", "turkey", "shrimp", "tôm", "crab", "cua", "cheese", "phô mai", "yogurt", "sữa chua", "lườn gà", "ức gà"]
     if any(n_cat == _normalize_for_matching(c) for c in protein_cats) or has_any(protein_kws):
-        tags.add("role_protein")
+        if not has_any_name(starch_sub_kws):  # Mỳ xào thịt không bị đẩy nhầm sang thuần protein
+            tags.add("role_protein")
 
     carb_cats = ["tinh_bot", "tinh bột"]
     carb_kws = ["rice", "cơm", "oat", "yến mạch", "bread", "bánh mì", "potato", "khoai tây", "cornstarch", "tinh bột", "popcorn", "cakes", "pudding", "ngũ cốc"]
-    if any(n_cat == _normalize_for_matching(c) for c in carb_cats) or has_any(carb_kws):
+    
+    is_valid_main_carb_range = (25.0 <= carbs <= 60.0)
+    
+    if any(n_cat == _normalize_for_matching(c) for c in carb_cats) or has_any(carb_kws) or (is_valid_main_carb_range and has_any_name(starch_sub_kws)):
         if not has_any_name(["chè", "che "]):
             tags.add("role_carb")
 
     fiber_cats = ["rau_cu", "trai_cay", "rau củ", "trái cây", "rau", "rau_xanh"]
     fiber_kws = ["cabbage", "cải", "vegetable", "rau", "salad", "xà lách", "onion", "hành", "fruit", "trái cây", "banana", "chuối", "muống", "bó xôi", "súp lơ", "nấm", "quả", "táo", "cam", "nho", "xoài"]
     if any(n_cat == _normalize_for_matching(c) for c in fiber_cats) or has_any(fiber_kws):
-        tags.add("role_fiber")
-
-    # 3. Clean protein
-    exclude_clean_kws = [
-        "vặt", "tráng miệng", "bánh", "kẹo", "chè", "kem",
-        "hộp", "canned", "pate", "lạp xưởng", "xúc xích", "đường"
-    ]
-    clean_protein_kws = [
-        "ức gà", "uc ga", "chicken breast", "thịt bò", "thit bo", "beef", "bắp bò",
-        "trứng", "egg", "cá hồi", "salmon", "cá ngừ", "tuna", "thịt lợn", "thịt heo", "pork",
-        "vịt", "duck", "tôm", "shrimp", "cua", "crab", "thịt nạc", "thịt gia cầm"
-    ]
-    if "role_protein" in tags:
-        if not has_any(exclude_clean_kws):
-            if_clean = has_any(clean_protein_kws) and not has_any_name(["sống", "raw"])
-            if if_clean:
-                tags.add("clean_protein")
+        if not has_any_name(starch_sub_kws):
+            tags.add("role_fiber")
 
     # 4. Portion limits
     if has_any_name(["khô", "sấy", "dried"]):
@@ -135,6 +129,13 @@ def get_dynamic_tags(food: Dict[str, Any]) -> Set[str]:
         tags.add("is_condensed_milk")
     if has_any_name(["tiết", "blood"]):
         tags.add("is_blood")
+
+    # 3. DYNAMIC TAG CLEAN_PROTEIN FILTER
+    is_known_clean_name = any(k in n_vi for k in ["ức gà", "lườn gà", "thịt bò loại i", "thịt bò loại 1", "thịt bò tươi", "thăn bò", "cá hồi"])
+    if (protein >= 16.0 and calories <= 300.0) or is_known_clean_name:
+        exclude_gym_kws = ["khô", "sấy", "bột", "powder", "whey", "pate", "ba tê", "lạp xưởng", "xúc xích", "ruốc", "chà bông", "nước sốt", "nước ướp", "sốt", "vị", "hương"]
+        if not has_any_name(exclude_gym_kws):
+            tags.add("clean_protein")
 
     dessert_cats = ["đồ_ăn_vặt", "đồ ăn vặt", "bánh_kẹo", "bánh kẹo", "tráng_miệng", "tráng miệng"]
     dessert_kws = ["bánh ngọt", "bánh kẹo", "chè", "dessert", "kẹo", "bim bim", "snack", "vặt", "tráng miệng"]
@@ -169,73 +170,83 @@ def check_category(cat: str, target: str) -> bool:
 
 
 def classify_food(f: Dict[str, Any]) -> str:
-    """Classify food into one of the 4 CSP meal roles with advanced filtering against sweet pastries."""
-    if "meal_role" in f and f["meal_role"] is not None:
-        name_check = str(f.get("name_vi") or "").lower()
-        if any(k in name_check for k in ['bánh dẻo', 'bánh nướng', 'nước ướp', 'nước sốt', 'sốt', 'mẻ', 'giấm', 'tương ngô', 'tương nếp']):
-            return "ACCESSORY_CONDIMENT"
-        return f["meal_role"]
-        
+    """Classify food into one of the 4 CSP meal roles with absolute top-priority accessory defense."""
     name_vi = str(f.get("name_vi") or "").lower()
+    name_en = str(f.get("canonical_name_en") or f.get("name_en") or "").lower()
     category = str(f.get("category") or "")
-    tags = f.get("tags") or set()
-    if isinstance(tags, list):
-        tags = set(tags)
-        
-    is_accessory = False
-    
-    if (check_category(category, "Gia vị, nước chấm") or 
-        check_category(category, "Nước giải khát") or 
-        (check_category(category, "Đồ hộp") and any(k in name_vi for k in ["sweet", "syrup", "ngọt", "si rô", "đường", "condensed"]))):
-        is_accessory = True
-        
-    if any(t in tags for t in ["is_powder", "is_processed", "is_condensed_milk", "is_cheese_butter", "allergen_milk", "is_dessert_snack"]):
-        is_accessory = True
-        
-    if check_category(category, "Sữa và chế phẩm sữa") or check_category(category, "Sữa"):
-        is_accessory = True
-        
-    # CHẶN TUYỆT ĐỐI BÁNH DẺO, BÁNH NƯỚNG, NƯỚC SỐT KHÔNG CHO LÀM MÓN ĂN CHÍNH
+    carbs = float(f.get("carbs_g") or f.get("carbs") or 0.0)
+    food_fat = float(f.get("fat_g") or f.get("fat") or 0.0)
+
+    starch_sub_kws = ["mỳ xào", "mì xào", "bún xào", "miến xào", "nui xào", "bánh đa xào", "fried noodle"]
+
+    # --- BỘ LỌC CHẶN TUYỆT ĐỐI Ở VỊ TRÍ TỐI CAO ---
     keywords_accessory = [
         'sữa mẹ', 'bia', 'rượu', 'vodka', 'cognac', 'cocktail', 'cồn', 'kẹo', 'mứt', 
         'chè', 'bim bim', 'kem', 'thạch', 'mật ong', 'chocopie', 'bích quy', 
         'nước mắm', 'mắm tôm', 'mắm tép', 'xì dầu', 'magi', 'mỳ chính', 'bột canh', 
-        'bột nêm', 'muối vừng', 'nước ướp', 'nước sốt', 'sốt', 'gói thuốc bắc', 'nước hàng', 
-        'tương ngô', 'tương nếp', 'mẻ', 'giấm', 'bánh dẻo', 'bánh nướng', 'bánh trung thu'
+        'bột nêm', 'muối vừng', 'nước hàng', 'gói thuốc bắc',
+        'mẻ', 'giấm', 'bánh dẻo', 'bánh nướng', 'bánh trung thu',
+        'nước ướp', 'nước sốt', 'sốt', 'nước chấm', 'mỡ nước', 'dầu ăn'
     ]
-    if any(kw in name_vi for kw in keywords_accessory):
+    if any(kw in name_vi for kw in keywords_accessory) or check_category(category, "Gia vị, nước chấm") or check_category(category, "Nước giải khát"):
+        return "ACCESSORY_CONDIMENT"
+
+    # KIỂM TRA ĐỀ XUẤT 1: Lọc khoảng carb 25-60 và PHẢI THOẢ MÃN lượng Fat < 5g mới được làm STAPLE_CARB
+    if (25.0 <= carbs <= 60.0) and (any(k in name_vi for k in starch_sub_kws) or any(k in name_en for k in ["fried noodle", "fried vermicelli"])):
+        if food_fat >= 5.0:
+            return "ACCESSORY_CONDIMENT"
+        return "STAPLE_CARB"
+
+    if "meal_role" in f and f["meal_role"] is not None:
+        return f["meal_role"]
+        
+    tags = f.get("tags") or set()
+    if not tags:
+        tags = get_dynamic_tags(f)
+        f["tags"] = tags
+    if isinstance(tags, list):
+        tags = set(tags)
+        
+    is_accessory = False
+    if (check_category(category, "Đồ hộp") and any(k in name_vi for k in ["sweet", "syrup", "ngọt", "si rô", "đường", "condensed"])):
+        is_accessory = True
+        
+    if any(t in tags for t in ["is_powder", "is_processed", "is_condensed_milk", "is_cheese_butter", "allergen_milk", "is_dessert_snack", "is_dried"]):
+        if "clean_protein" not in tags:
+            is_accessory = True
+        
+    if check_category(category, "Sữa và chế phẩm sữa") or check_category(category, "Sữa"):
         is_accessory = True
         
     is_raw = any(kw in name_vi for kw in ['sống', 'raw', 'chưa chế biến', 'gạo tẻ', 'gạo nếp'])
     has_cooking = any(kw in name_vi for kw in ['luộc', 'nướng', 'hấp', 'chín', 'hầm', 'chần', 'xào', 'rán', 'kho'])
     if is_raw and not has_cooking:
-        is_accessory = True
-        
+        if "role_carb" in tags or not ("role_protein" in tags or "clean_protein" in tags or is_clean_protein_gym(f)):
+            is_accessory = True
+
     if is_accessory:
         return "ACCESSORY_CONDIMENT"
-        
-    # Nhóm tinh bột chín mặn chuẩn vị Việt
-    keywords_carb = ['cơm', 'bún, tươi', 'bánh phở', 'nui, luộc', 'xôi', 'bánh mì', 'bánh mỳ', 'bánh cuốn', 'mỳ sợi', 'bánh khúc', 'bánh giò', 'bánh chưng', 'bánh đúc', 'bánh tẻ']
+
+    # 1. NHÓM TINH BỘT CHÍN
+    keywords_carb = ['cơm', 'bún, tươi', 'bánh phở', 'nui, luộc', 'xôi', 'bánh mì', 'bánh mỳ', 'bánh cuốn', 'mỳ sợi', 'bánh khúc', 'bánh giò', 'bánh chưng', 'bánh đúc', 'bánh tẻ', 'mỳ ăn liền']
     if "role_carb" in tags or (any(kw in name_vi for kw in keywords_carb) and "bó xôi" not in name_vi):
+        # ĐỀ XUẤT 2: Chặn triệt để quẩy béo / bánh béo chiên rán ngập dầu ra khỏi tinh bột bữa chính
+        if food_fat >= 5.0:
+            return "ACCESSORY_CONDIMENT"
         return "STAPLE_CARB"
         
-    keywords_prep = ['luộc', 'xào', 'hấp', 'nộm', 'salad', 'tươi', 'muối sổi', 'dưa cải', 'chín', 'canh']
-    if "role_fiber" in tags or (check_category(category, "Rau, quả, củ dùng làm rau") and any(kw in name_vi for kw in keywords_prep)):
+    # 2. NHÓM RAU / CHẤT XƠ
+    keywords_prep = ['luộc', 'xào', 'hấp', 'nộm', 'salad', 'tươi', 'muối sổi', 'dưa cải', 'chín', 'canh', 'cà chua']
+    if "role_fiber" in tags or (check_category(category, "Rau, quả, củ dùng làm rau") and (any(kw in name_vi for kw in keywords_prep) or True)):
         return "FIBER_SIDE"
         
-    is_protein = False
-    if "role_protein" in tags or "clean_protein" in tags:
-        is_protein = True
-    elif (check_category(category, "Thịt và sản phẩm chế biến") or 
-          check_category(category, "Thủy sản và sản phẩm chế biến") or 
-          check_category(category, "Trứng và sản phẩm chế biến")):
-        keywords_protein_prep = ['luộc', 'xào', 'rán', 'kho', 'sốt', 'hầm', 'nướng', 'quay', 'hấp', 'chiên', 'chín', 'nấu', 'rang', 'chần']
-        if any(kw in name_vi for kw in keywords_protein_prep):
-            is_protein = True
-                  
-    if is_protein:
-        if any(kw in name_vi for kw in ['ruốc', 'pate', 'ba tê', 'lạp xường', 'lạp sườn', 'khô', 'chả lụa', 'giò lụa', 'xúc xích']):
-            return "ACCESSORY_CONDIMENT"
+    # 3. NHÓM ĐẠM CHÍNH
+    if "clean_protein" in tags or "role_protein" in tags:
+        return "MAIN_PROTEIN"
+        
+    if (check_category(category, "Thịt và sản phẩm chế biến") or 
+        check_category(category, "Thủy sản và sản phẩm chế biến") or 
+        check_category(category, "Trứng và sản phẩm chế biến")):
         return "MAIN_PROTEIN"
         
     return "ACCESSORY_CONDIMENT"
@@ -246,7 +257,7 @@ def is_single_bowl_meal(f: Dict[str, Any]) -> bool:
     tags = f.get("tags") or set()
     if "is_main_dish" in tags:
         return True
-    keywords = ['phở', 'bún chả', 'bún nem', 'mỳ vằn thắn', 'mỳ sợi', 'bánh cuốn', 'cháo', 'xôi', 'bánh mì', 'bánh mỳ']
+    keywords = ['phở', 'bún chả', 'bún nem', 'mỳ vằn thắn', 'mỳ sợi', 'bánh cuốn', 'cháo', 'xôi', 'bánh mì', 'bánh mỳ', 'bún bò']
     return any(k in name_vi for k in keywords)
 
 
@@ -264,11 +275,18 @@ def is_offal_or_blood(f: Dict[str, Any]) -> bool:
 
 def is_clean_protein_gym(f: Dict[str, Any]) -> bool:
     tags = f.get("tags") or set()
-    name_en = str(f.get("canonical_name_en") or "").lower()
-    name_vi = str(f.get("name_vi") or "").lower()
+    if not tags:
+        tags = get_dynamic_tags(f)
+        f["tags"] = tags
+    if isinstance(tags, list):
+        tags = set(tags)
     if "clean_protein" in tags:
         return True
-    gym_kws = ['chicken_breast', 'beef_tenderloin', 'pork_loin', 'egg', 'salmon', 'tuna', 'ức gà', 'thăn bò', 'thăn heo', 'trứng', 'cá hồi', 'cá ngừ']
+    if any(t in tags for t in ["is_dried", "is_powder", "is_processed"]):
+        return False
+    name_vi = str(f.get("name_vi") or "").lower()
+    name_en = str(f.get("canonical_name_en") or "").lower()
+    gym_kws = ['chicken_breast', 'beef_tenderloin', 'pork_loin', 'egg', 'salmon', 'tuna', 'ức gà', 'lườn gà', 'thăn bò', 'thăn heo', 'trứng', 'cá hồi', 'cá ngừ', 'gà tây']
     return any(kw in name_en or kw in name_vi for kw in gym_kws)
 
 
@@ -323,7 +341,7 @@ def is_high_quality_protein(food: Dict[str, Any]) -> bool:
     if not tags:
         tags = get_dynamic_tags(food)
         food["tags"] = tags
-    return "clean_protein" in tags
+    return "clean_protein" in tags or is_clean_protein_gym(food)
 
 
 def is_standalone_main_dish(f: Dict[str, Any]) -> bool:

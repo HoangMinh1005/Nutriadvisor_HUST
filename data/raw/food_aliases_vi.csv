@@ -1,4 +1,4 @@
-﻿alias_id,canonical_key,canonical_name_en,alias_text,alias_lang,alias_type,is_preferred,source,source_priority
+alias_id,canonical_key,canonical_name_en,alias_text,alias_lang,alias_type,is_preferred,source,source_priority
 ALIAS-000001,boiled pig blood,Boiled pig blood,Tiết luộc,vi,display,True,NIN,1
 ALIAS-000002,canned herring in tomato sauce,Canned herring in tomato sauce,Cá trích hộp sốt cà chua,vi,display,True,NIN,1
 ALIAS-000003,canned mackerel in tomato sauce,Canned mackerel in tomato sauce,Cá nục sốt cà chua (cá hộp),vi,display,True,NIN,1
@@ -1912,3 +1912,8 @@ ALIAS-001910,rice vermicelli with boiled muscovy and fresh bamboo shoots,Rice ve
 ALIAS-001911,rice vermicelli with crab spring rolls,Rice vermicelli with Crab spring rolls,bun nem cua be,vi,non_diacritic,False,NIN,1
 ALIAS-001912,"rice vermicelli with tofu, pork intestine and fermented shrimp paste","Rice vermicelli with tofu, pork intestine and fermented shrimp paste","bun dau mam tom, long lon",vi,non_diacritic,False,NIN,1
 ALIAS-001913,rice vermicelli with sandworm omelet,Rice vermicelli with sandworm omelet,bun cha ruoi,vi,non_diacritic,False,NIN,1
+ALIAS-001914,rice_white_polished_cooked,"Rice, white, polished, cooked",Cơm chín,vi,display,True,VDD,1
+ALIAS-001915,rice_white_polished_cooked,"Rice, white, polished, cooked",Cơm trắng,vi,display,False,VDD,1
+ALIAS-001916,rice_white_polished_cooked,"Rice, white, polished, cooked",com chin,vi,non_diacritic,False,VDD,1
+ALIAS-001917,rice_white_polished_cooked,"Rice, white, polished, cooked",com trang,vi,non_diacritic,False,VDD,1
+

@@ -162,7 +162,31 @@ class KNNFoodRecommender:
         if exclude_snacks:
             snacks = []
 
+        # Gym profile check
+        is_gym_profile = (
+            float(user_profile.get("daily_calorie_target") or 0.0) >= 2800.0
+            or str(user_profile.get("goal") or "").lower() == "gym"
+            or "gym" in str(user_profile.get("user_message") or "").lower()
+            or (user_profile.get("macro_ratios") or {}).get("protein", 0.0) >= 0.25
+        )
+
+        if is_gym_profile:
+            from csp.classification import is_clean_protein_gym
+            def protein_sort_key(idx):
+                food = self.food_metadata[idx]
+                tags = food.get("tags") or set()
+                name_low = str(food.get("name_vi") or "").lower()
+                is_clean = "clean_protein" in tags or is_clean_protein_gym(food)
+                if is_clean:
+                    if any(k in name_low for k in ["ức gà", "lườn gà", "gà công nghiệp", "thăn bò", "bắp bò", "bò, loại i", "bò, lưng, nạc", "thăn lợn", "thăn heo", "lợn, loại i", "heo, loại i", "cá hồi", "cá ngừ", "cá quả", "cá chép", "cá trắm", "cá basa", "cá chim", "cá điêu hồng"]):
+                        return 0
+                    return 1
+                return 2
+            proteins.sort(key=protein_sort_key)
+
+
         # Target counts for diversity
+
         target_protein = int(n * 0.35)
         target_carb = int(n * 0.35)
         target_fiber = int(n * 0.20)

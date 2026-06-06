@@ -12,17 +12,18 @@ def test_feature_store_extracts_and_normalizes_database_vectors(database_url: st
 
     extracted = store.extract_food_vectors()
     assert set(FEATURE_COLUMNS).issubset(set(extracted.columns))
-    assert len(extracted) == 842
+    total_foods = len(extracted)
+    assert total_foods >= 842
     assert extracted["food_id"].min() == 1
-    assert extracted["food_id"].max() == 842
+    assert extracted["food_id"].max() == total_foods
 
     normalized = store.normalize_nutrients(extracted)
     for column in NUTRIENT_COLUMNS:
         assert f"{column}_norm" in normalized.columns
 
     matrix, metadata = store.to_feature_matrix(normalized)
-    assert matrix.shape == (842, 14)
-    assert len(metadata) == 842
+    assert matrix.shape == (total_foods, 14)
+    assert len(metadata) == total_foods
     assert metadata[0]["food_id"] == 1
 
 
