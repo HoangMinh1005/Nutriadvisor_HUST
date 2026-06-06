@@ -1,0 +1,42 @@
+{"text":"Hãy gợi ý thực đơn 2500 calo để tăng cơ, ngân sách 100k, không có hải sản.","intent":"recommend_meal"}
+{"text":"Tôi muốn một bữa ăn giảm cân ít béo, ít calo.","intent":"recommend_meal"}
+{"text":"Lên cho tôi menu 3 bữa trong ngày, ưu tiên protein cao.","intent":"recommend_meal"}
+{"text":"Gợi ý món ăn cho người tập gym cần tăng cơ.","intent":"recommend_meal"}
+{"text":"Tôi cần thực đơn không quá 50k mỗi ngày.","intent":"recommend_meal"}
+{"text":"Có món nào 1000 calo, phù hợp giảm cân không?","intent":"recommend_meal"}
+{"text":"Tôi bị dị ứng đậu phộng, hãy gợi ý bữa ăn an toàn.","intent":"recommend_meal"}
+{"text":"Lập kế hoạch ăn uống cho người chạy bộ 5 ngày.","intent":"recommend_meal"}
+{"text":"Tôi muốn tăng cơ và ăn nhiều đạm hơn.","intent":"recommend_meal"}
+{"text":"Cho tôi menu healthy, nhiều rau và ít tinh bột.","intent":"recommend_meal"}
+{"text":"Tôi muốn được gợi ý một thực đơn tăng cơ, tôi bị dị ứng với lạc, chi phí 100k mỗi ngày.","intent":"recommend_meal"}
+{"text":"Tôi là người tập gym, cần thực đơn tăng cơ và nhiều protein.","intent":"recommend_meal"}
+{"text":"Người tập gym nên ăn gì để tăng cơ mà vẫn giữ ngân sách 150k/ngày?","intent":"recommend_meal"}
+{"text":"Làm cho tôi thực đơn 1 ngày để tăng cơ, tránh đậu phộng và hải sản, ngân sách 120k.","intent":"recommend_meal"}
+{"text":"Tôi cần menu cho người tập gym, ưu tiên nhiều đạm, không có trứng.","intent":"recommend_meal"}
+{"text":"Gợi ý bữa sáng và bữa tối cho người tăng cơ trong 7 ngày, ngân sách 90k mỗi ngày.","intent":"recommend_meal"}
+{"text":"Tôi muốn thực đơn tăng cơ 2200 calo, ít đường và không có lạc.","intent":"recommend_meal"}
+{"text":"Tôi cần thực đơn theo ngày để tập gym, khoảng 100k/ngày và tránh sữa.","intent":"recommend_meal"}
+{"text":"Cập nhật chiều cao của tôi là 170cm và cân nặng 65kg.","intent":"update_profile"}
+{"text":"Tôi nặng 72kg, cao 175cm, hãy cập nhật hồ sơ.","intent":"update_profile"}
+{"text":"Mục tiêu của tôi là giảm 3kg trong 2 tháng.","intent":"update_profile"}
+{"text":"Cập nhật mục tiêu của tôi sang tăng cơ trong 2 tháng tới.","intent":"update_profile"}
+{"text":"Tôi muốn lưu hồ sơ: cao 170cm, nặng 65kg, ăn chay và không dùng sữa.","intent":"update_profile"}
+{"text":"Tôi muốn thay đổi mục tiêu sang tăng cơ.","intent":"update_profile"}
+{"text":"Tôi ăn chay và không dùng sữa.","intent":"update_profile"}
+{"text":"Tôi có dị ứng hải sản và trứng.","intent":"update_profile"}
+{"text":"Cân nặng hiện tại của tôi là 58kg.","intent":"update_profile"}
+{"text":"Tôi muốn duy trì cân nặng và ăn uống lành mạnh.","intent":"update_profile"}
+{"text":"100g yến mạch có bao nhiêu calo và protein?","intent":"ask_nutrition"}
+{"text":"Thịt bò chứa bao nhiêu protein và chất béo?","intent":"ask_nutrition"}
+{"text":"Món bò beef bao nhiêu calo?","intent":"ask_nutrition"}
+{"text":"100g ức gà có bao nhiêu protein?","intent":"ask_nutrition"}
+{"text":"Bánh mì có nhiều calo không?","intent":"ask_nutrition"}
+{"text":"Sữa chua có tốt cho người tập gym không?","intent":"ask_nutrition"}
+{"text":"Món này có bao nhiêu fat và carbs?","intent":"ask_nutrition"}
+{"text":"Tôi nên ăn bao nhiêu calo một ngày?","intent":"ask_nutrition"}
+{"text":"Rau bina có chất dinh dưỡng gì?","intent":"ask_nutrition"}
+{"text":"Cá hồi có omega 3 không?","intent":"ask_nutrition"}
+{"text":"Xin chào, hôm nay thời tiết thế nào?","intent":"unknown"}
+{"text":"Bạn có biết chơi bóng đá không?","intent":"unknown"}
+{"text":"Tôi muốn nghe một câu chuyện vui.","intent":"unknown"}
+{"text":"Mấy giờ rồi?","intent":"unknown"}

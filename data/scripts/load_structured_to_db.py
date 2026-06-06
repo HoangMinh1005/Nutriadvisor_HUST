@@ -277,6 +277,64 @@ def _load_foods(cur: psycopg.Cursor, rows: list[dict[str, str]], dataset_version
                 dataset_version_id,
             ),
         )
+    return food_id_by_key
+
+
+
+
+def _load_tags(cur: psycopg.Cursor, rows: list[dict[str, str]], food_id_by_key: dict[str, int]) -> None:
+    """Load tags from CSV rows, insert unique ones into food_tags, and map them in food_tag_mapping."""
+    # First, collect all unique tag codes from the CSV
+    unique_tags = set()
+    for row in rows:
+        tags_str = _clean_text(row.get("tags"))
+        if tags_str:
+            for tag in tags_str.split(","):
+                tag = tag.strip().lower()
+                if tag:
+                    unique_tags.add(tag)
+
+    # Insert unique tags into food_tags table
+    for tag_code in sorted(unique_tags):
+        tag_name = tag_code.replace("_", " ").capitalize()
+        cur.execute(
+            """
+            INSERT INTO food_tags (tag_code, tag_name, description)
+            VALUES (%s, %s, %s)
+            ON CONFLICT (tag_code) DO NOTHING;
+            """,
+            (tag_code, tag_name, f"Automatically generated tag for {tag_name}"),
+        )
+
+    # Select all tag ids to map code -> tag_id
+    cur.execute("SELECT tag_code, tag_id FROM food_tags;")
+    tag_id_map = {r[0]: r[1] for r in cur.fetchall()}
+
+    # Insert mappings
+    for row in rows:
+        canonical_key = _clean_text(row.get("canonical_key"))
+        food_id = food_id_by_key.get(canonical_key)
+        if not food_id:
+            continue
+
+        tags_str = _clean_text(row.get("tags"))
+        if not tags_str:
+            continue
+
+        for tag_code in tags_str.split(","):
+            tag_code = tag_code.strip().lower()
+            tag_id = tag_id_map.get(tag_code)
+            if not tag_id:
+                continue
+
+            cur.execute(
+                """
+                INSERT INTO food_tag_mapping (food_id, tag_id, confidence, assigned_by)
+                VALUES (%s, %s, 1.000, 'rule_engine')
+                ON CONFLICT (food_id, tag_id) DO NOTHING;
+                """,
+                (food_id, tag_id),
+            )
 
 
 def _load_aliases(cur: psycopg.Cursor, alias_rows: list[dict[str, str]]) -> None:
@@ -367,7 +425,8 @@ def main() -> None:
                 source_name="structured_csv",
                 source_file=structured_path.name,
             )
-            _load_foods(cur, rows, dataset_version_id)
+            food_id_by_key = _load_foods(cur, rows, dataset_version_id)
+            _load_tags(cur, rows, food_id_by_key)
             _load_aliases(cur, alias_rows)
         conn.commit()
 

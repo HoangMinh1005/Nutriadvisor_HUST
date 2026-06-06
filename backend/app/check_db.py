@@ -18,6 +18,7 @@ class DatabaseChecker:
         "dataset_versions",
         "foods",
         "food_nutrients",
+        "food_price_estimates",
         "food_aliases",
         "food_tags",
         "food_tag_mapping",

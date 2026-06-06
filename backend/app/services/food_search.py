@@ -51,8 +51,11 @@ def _format_items(rows: list[dict[str, Any]], include_score: bool = False) -> li
             "carbs": float(row.get("carbs_g") or 0),
             "alias_texts": _fetch_aliases_for_food(int(row["food_id"])),
         }
-        if include_score and row.get("match_score") is not None:
-            item["match_score"] = round(float(row.get("match_score") or 0), 3)
+        if include_score:
+            score_val = row.get("match_score")
+            if score_val is None:
+                score_val = 1.0
+            item["match_score"] = round(float(score_val), 3)
         items.append(item)
     return items
 
@@ -181,7 +184,7 @@ def search_foods(query: str, limit: int = 5) -> dict[str, Any]:
             "query": query,
             "tier": "exact",
             "count": len(exact_rows),
-            "items": _format_items(exact_rows, include_score=False),
+            "items": _format_items(exact_rows, include_score=True),
         }
 
     fuzzy_rows = _search_fuzzy(query, limit)

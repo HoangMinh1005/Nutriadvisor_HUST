@@ -2,6 +2,9 @@ import os
 from typing import Any, Dict
 
 from fastapi import FastAPI, HTTPException, Query
+from dotenv import load_dotenv
+
+load_dotenv()
 
 from .check_db import verify_database
 from .services.food_search import search_foods as search_foods_index
