@@ -1,0 +1,310 @@
+"""Unit tests for the CSP Meal Planning Module."""
+from __future__ import annotations
+
+import pytest
+
+from csp import MealScheduler, NutrientConstraints
+
+
+def test_nutrient_constraints_calories():
+    constraints = NutrientConstraints(daily_calorie_target=1800.0, calorie_tolerance_pct=0.10)
+    
+    # Valid daily meals (total: 1810 kcal)
+    valid_meals = [
+        {"calories": 400},
+        {"energy_kcal": 600},
+        {"calories": 300},
+        {"energy_kcal": 510},
+    ]
+    assert constraints.check_daily_calories(valid_meals) is True
+
+    # Too high (total: 2100 kcal)
+    high_meals = [
+        {"calories": 500},
+        {"calories": 700},
+        {"calories": 400},
+        {"calories": 500},
+    ]
+    assert constraints.check_daily_calories(high_meals) is False
+
+
+def test_nutrient_constraints_allergies():
+    constraints = NutrientConstraints(allergies=["peanut", "hải sản"])
+    
+    safe_meals = [
+        {"canonical_name_en": "Chicken Breast", "name_vi": "ức gà", "category": "gia_cam"},
+        {"canonical_name_en": "White Rice", "name_vi": "cơm trắng", "category": "tinh_bot"},
+    ]
+    assert constraints.check_allergies(safe_meals) is True
+
+    allergic_meals = [
+        {"canonical_name_en": "Peanut Butter", "name_vi": "bơ đậu phộng", "category": "hat"},
+        {"canonical_name_en": "White Rice", "name_vi": "cơm trắng", "category": "tinh_bot"},
+    ]
+    assert constraints.check_allergies(allergic_meals) is False
+
+
+def test_nutrient_constraints_weekly_diversity():
+    constraints = NutrientConstraints(max_food_occurrences_per_week=2)
+    
+    # Food IDs with counts within max occurrence (2)
+    valid_ids = [1, 2, 3, 4, 1, 2, 3, 4, 5, 6, 5, 6]
+    assert constraints.check_weekly_diversity(valid_ids) is True
+
+    # ID 1 appears 3 times
+    invalid_ids = [1, 2, 3, 4, 1, 2, 3, 4, 1, 6]
+    assert constraints.check_weekly_diversity(invalid_ids) is False
+
+
+def test_scheduler_solve_offline_fallback():
+    user = {
+        "daily_calorie_target": 1000,
+        "macro_ratios": {"protein": 0.3, "fat": 0.3, "carbs": 0.4},
+        "allergies": ["duck", "vịt"],  # Duck has food_id=10
+        "budget_vnd_max": 100000,
+    }
+    
+    scheduler = MealScheduler(user_profile=user, db_url="")
+    result = scheduler.solve_with_relaxation()
+
+    assert result["feasible"] is True
+    assert len(result["meal_plan"]) == 7
+    
+    # Verify no meal contains duck
+    for day in result["meal_plan"]:
+        assert len(day["meals"]) == 4
+        for meal in day["meals"]:
+            assert "duck" not in str(meal.get("name")).lower()
+            assert "vịt" not in str(meal.get("name")).lower()
+
+
+def test_scheduler_solve_auto_relaxation():
+    user = {
+        "daily_calorie_target": 3000,  # Extreme calorie target for limited sample foods
+        "macro_ratios": {"protein": 0.3, "fat": 0.3, "carbs": 0.4},
+        "budget_vnd_max": 2000,  # Extreme budget restriction
+    }
+    
+    scheduler = MealScheduler(user_profile=user, db_url="")
+    result = scheduler.solve_with_relaxation(max_attempts=3)
+    
+    # Due to extremely tight budget and calorie targets, it should trigger relaxation
+    # and eventually complete successfully or gracefully handle the infeasibility
+    assert result["relaxation_attempts"] > 1
+
+
+def test_translate_kaggle_food_name():
+    from csp.scheduler import translate_kaggle_food_name
+    
+    # "dried" and "dry" are now stripped from Kaggle translations
+    assert translate_kaggle_food_name("Egg, dried, white") == "Lòng trắng trứng"
+    assert translate_kaggle_food_name("Egg, dried, yolk") == "Lòng đỏ trứng"
+    assert translate_kaggle_food_name("Chicken Breast") == "Ức gà"
+    assert translate_kaggle_food_name("Egg, white") == "Lòng trắng trứng"
+
+
+def test_dietary_rules():
+    # Rich mock data to trigger is_rich_db matching (>=1 carbs, >=1 proteins, >=1 fibers)
+    rich_mock_foods = [
+        {"food_id": 1, "canonical_name_en": "Chicken Breast", "name_vi": "ức gà", "calories": 165, "protein": 31, "fat": 3.6, "carbs": 0, "cost_vnd_100g": 15000, "category": "thịt_gia_cầm"},
+        {"food_id": 2, "canonical_name_en": "Egg", "name_vi": "trứng", "calories": 155, "protein": 13, "fat": 11, "carbs": 1.1, "cost_vnd_100g": 4000, "category": "trứng"},
+        {"food_id": 3, "canonical_name_en": "Oats", "name_vi": "yến mạch", "calories": 389, "protein": 16.9, "fat": 6.9, "carbs": 66.3, "cost_vnd_100g": 10000, "category": "tinh_bột"},
+        {"food_id": 4, "canonical_name_en": "White Rice", "name_vi": "cơm trắng", "calories": 130, "protein": 2.7, "fat": 0.3, "carbs": 28, "cost_vnd_100g": 1800, "category": "tinh_bột"},
+        {"food_id": 5, "canonical_name_en": "Beef", "name_vi": "thịt bò", "calories": 250, "protein": 26, "fat": 15, "carbs": 0, "cost_vnd_100g": 25000, "category": "thịt_đỏ"},
+        {"food_id": 6, "canonical_name_en": "Salmon", "name_vi": "cá hồi", "calories": 208, "protein": 20, "fat": 13, "carbs": 0, "cost_vnd_100g": 45000, "category": "cá_hải_sản"},
+        {"food_id": 7, "canonical_name_en": "Milk", "name_vi": "sữa tươi", "calories": 60, "protein": 3.2, "fat": 3.25, "carbs": 4.8, "cost_vnd_100g": 3000, "category": "sữa"},
+        {"food_id": 8, "canonical_name_en": "Banana", "name_vi": "chuối", "calories": 89, "protein": 1.1, "fat": 0.3, "carbs": 22.8, "cost_vnd_100g": 2000, "category": "trái_cây"},
+        {"food_id": 9, "canonical_name_en": "Cabbage", "name_vi": "rau cải", "calories": 25, "protein": 1.3, "fat": 0.1, "carbs": 5.8, "cost_vnd_100g": 1500, "category": "rau_xanh"},
+        {"food_id": 10, "canonical_name_en": "Duck", "name_vi": "thịt vịt", "calories": 337, "protein": 19, "fat": 28, "carbs": 0, "cost_vnd_100g": 18000, "category": "thịt_gia_cầm"},
+        # Additional carbs/proteins/fibers to satisfy minimum counts
+        {"food_id": 11, "canonical_name_en": "Bread", "name_vi": "bánh mì", "calories": 265, "protein": 9, "fat": 3.2, "carbs": 49, "cost_vnd_100g": 5000, "category": "tinh_bột"},
+        {"food_id": 12, "canonical_name_en": "Sweet Potato", "name_vi": "khoai lang", "calories": 86, "protein": 1.6, "fat": 0.1, "carbs": 20, "cost_vnd_100g": 3000, "category": "tinh_bột"},
+        {"food_id": 13, "canonical_name_en": "Pork", "name_vi": "thịt heo", "calories": 242, "protein": 27, "fat": 14, "carbs": 0, "cost_vnd_100g": 14000, "category": "thịt_lợn"},
+        {"food_id": 14, "canonical_name_en": "Spinach", "name_vi": "rau bó xôi", "calories": 23, "protein": 2.9, "fat": 0.4, "carbs": 3.6, "cost_vnd_100g": 4000, "category": "rau_xanh"},
+        {"food_id": 15, "canonical_name_en": "Broccoli", "name_vi": "súp lơ xanh", "calories": 34, "protein": 2.8, "fat": 0.4, "carbs": 7, "cost_vnd_100g": 5000, "category": "rau_xanh"},
+        {"food_id": 16, "canonical_name_en": "Brown Rice", "name_vi": "cơm lứt", "calories": 111, "protein": 2.6, "fat": 0.9, "carbs": 23, "cost_vnd_100g": 3000, "category": "tinh_bột"},
+        # Standalone main dishes
+        {"food_id": 17, "canonical_name_en": "Beef Pho", "name_vi": "Phở bò chín bình dân", "calories": 350, "protein": 15, "fat": 8, "carbs": 45, "cost_vnd_100g": 10000, "category": "món_chính"},
+        {"food_id": 18, "canonical_name_en": "Stir-fried Noodles", "name_vi": "Mỳ xào thập cẩm", "calories": 400, "protein": 12, "fat": 15, "carbs": 50, "cost_vnd_100g": 12000, "category": "món_chính"},
+        # Snacks
+        {"food_id": 19, "canonical_name_en": "Dried Jackfruit", "name_vi": "Mít khô", "calories": 280, "protein": 2, "fat": 1, "carbs": 70, "cost_vnd_100g": 35000, "category": "đồ_ăn_vặt"},
+        # Extra proteins for diversity across 7 days
+        {"food_id": 20, "canonical_name_en": "Tuna", "name_vi": "cá ngừ tươi", "calories": 130, "protein": 28, "fat": 1.2, "carbs": 0, "cost_vnd_100g": 20000, "category": "cá_hải_sản"},
+        {"food_id": 21, "canonical_name_en": "Shrimp", "name_vi": "tôm", "calories": 99, "protein": 24, "fat": 0.3, "carbs": 0.2, "cost_vnd_100g": 30000, "category": "cá_hải_sản"},
+        {"food_id": 22, "canonical_name_en": "Morning Glory", "name_vi": "rau muống", "calories": 19, "protein": 2.6, "fat": 0.1, "carbs": 3.1, "cost_vnd_100g": 1000, "category": "rau_xanh"},
+        {"food_id": 23, "canonical_name_en": "Nấm rơm", "name_vi": "nấm rơm", "calories": 35, "protein": 3.8, "fat": 0.5, "carbs": 4.0, "cost_vnd_100g": 8000, "category": "rau_xanh"},
+    ]
+
+    user = {
+        "daily_calorie_target": 1800,
+        "macro_ratios": {"protein": 0.3, "fat": 0.3, "carbs": 0.4},
+        "budget_vnd_max": 250000,  # Generous budget for small dataset
+    }
+    
+    # We pass the rich mock foods directly to the scheduler
+    scheduler = MealScheduler(user_profile=user, available_foods=rich_mock_foods, db_url="")
+    result = scheduler.solve_with_relaxation()
+
+    assert result["feasible"] is True
+    assert len(result["meal_plan"]) == 7
+    
+    for day in result["meal_plan"]:
+        # Verify at least 3 slots (Breakfast, Lunch, Dinner) - may have 4 with snack
+        assert len(day["meals"]) >= 3
+        
+        meals_by_type = {m["meal_type"]: m for m in day["meals"]}
+        
+        # 1. Main meals (Breakfast, Lunch, Dinner) contain NO snacks/desserts (Mít khô)
+        for slot in ["breakfast", "lunch", "dinner"]:
+            meal = meals_by_type[slot]
+            assert "mít khô" not in meal["name"].lower()
+            assert "đồ_ăn_vặt" not in meal.get("category", "").lower()
+            
+        # 2. Check standalone món_chính rule (no '+' in name if category is món_chính)
+        for slot in ["breakfast", "lunch", "dinner"]:
+            meal = meals_by_type[slot]
+            if meal.get("category") == "món_chính":
+                assert "+" not in meal["name"]
+
+
+def test_calorie_distribution_constraint():
+    constraints = NutrientConstraints(daily_calorie_target=3000.0)
+    
+    # 1. Perfectly distributed plan (total: 3000 kcal)
+    # Breakfast: 750 (25%), Lunch: 1050 (35%), Dinner: 1200 (40%)
+    valid_plan = [
+        {"meal_type": "breakfast", "calories": 750},
+        {"meal_type": "lunch", "calories": 1050},
+        {"meal_type": "dinner", "calories": 1200},
+    ]
+    assert constraints.check_calorie_distribution(valid_plan) is True
+
+    # 2. Extreme plan (Breakfast: 150 (5%), Lunch: 1350 (45%), Dinner: 1500 (50%))
+    invalid_plan = [
+        {"meal_type": "breakfast", "calories": 150},
+        {"meal_type": "lunch", "calories": 1350},
+        {"meal_type": "dinner", "calories": 1500},
+    ]
+    assert constraints.check_calorie_distribution(invalid_plan) is False
+
+
+def test_gym_high_quality_protein_rules():
+    from csp.scheduler import is_high_quality_protein
+    # Verify that dried/powdered egg white is NOT treated as high quality protein
+    dried_egg = {"name_vi": "Lòng trắng trứng sấy khô", "canonical_name_en": "Egg, dried, white", "category": "trứng"}
+    assert is_high_quality_protein(dried_egg) is False
+
+    # Fresh chicken breast is high quality
+    fresh_chicken = {"name_vi": "ức gà tươi", "canonical_name_en": "Chicken breast, fresh", "category": "thịt_gia_cầm"}
+    assert is_high_quality_protein(fresh_chicken) is True
+
+    # Fresh egg is high quality (not dried/powdered)
+    fresh_egg = {"name_vi": "trứng gà", "canonical_name_en": "Egg, whole", "category": "trứng"}
+    assert is_high_quality_protein(fresh_egg) is True
+
+
+def test_get_max_serving_g():
+    from csp.scheduler import get_max_serving_g
+    
+    # Cheese should be 50g
+    cheese = {"name_vi": "Phô mai tam giác", "category": "Các món trứng, sữa và chế phẩm"}
+    assert get_max_serving_g(cheese) == 50.0
+
+    # Cơm should be 300g
+    com = {"name_vi": "Cơm trắng", "category": "tinh_bot"}
+    assert get_max_serving_g(com) == 300.0
+
+    # Powder should be 30g
+    powder = {"name_vi": "Bột chuối sấy khô", "category": "trái_cây"}
+    assert get_max_serving_g(powder) == 30.0
+
+
+def test_improved_translation():
+    from csp.scheduler import translate_kaggle_food_name
+    
+    assert translate_kaggle_food_name("Chicken, breast, meat only, raw") == "Ức gà"
+    assert translate_kaggle_food_name("Egg, white, raw, fresh") == "Lòng trắng trứng"
+    assert translate_kaggle_food_name("Milk, fluid, 3.25% milkfat") == "Sữa 3.25% béo"
+    assert translate_kaggle_food_name("Pork, fresh, loin, separable lean only, raw") == "Thịt thăn heo"
+    assert translate_kaggle_food_name("Egg, dried, white") == "Lòng trắng trứng"
+    
+    # New translations
+    assert translate_kaggle_food_name("smoked salmon") == "Cá hồi xông khói"
+    assert translate_kaggle_food_name("cod, cooked") == "Cá tuyết luộc"
+    assert translate_kaggle_food_name("chicken, thigh, cooked") == "Thịt đùi gà luộc"
+    
+    # Raw default cooking method addition
+    assert translate_kaggle_food_name("Fish, raw") == "Cá hấp"
+    assert translate_kaggle_food_name("Chicken, raw") == "Thịt gà luộc"
+    assert translate_kaggle_food_name("Beef, raw") == "Thịt bò xào"
+    assert translate_kaggle_food_name("Pork, raw") == "Thịt heo luộc"
+
+
+def test_food_tagging():
+    from csp.scheduler import get_dynamic_tags
+    
+    # Chicken breast -> clean_protein, role_protein, allergen_chicken
+    gà_tags = get_dynamic_tags({"name_vi": "ức gà tươi", "canonical_name_en": "Chicken, breast, raw", "category": "gia_cam"})
+    assert "clean_protein" in gà_tags
+    assert "role_protein" in gà_tags
+    assert "allergen_chicken" in gà_tags
+    assert "allergen_seafood" not in gà_tags
+
+    # Salmon -> allergen_seafood, role_protein, clean_protein
+    cá_tags = get_dynamic_tags({"name_vi": "cá hồi tươi", "canonical_name_en": "Salmon, fillet, raw", "category": "hai_san"})
+    assert "allergen_seafood" in cá_tags
+    assert "role_protein" in cá_tags
+    assert "clean_protein" in cá_tags
+    
+    # Milk -> allergen_milk, role_protein
+    milk_tags = get_dynamic_tags({"name_vi": "Sữa tươi tiệt trùng", "canonical_name_en": "Milk, fluid", "category": "sua_che_pham"})
+    assert "allergen_milk" in milk_tags
+    assert "role_protein" in milk_tags
+    assert "allergen_seafood" not in milk_tags
+
+
+def test_che_exclusion_and_suffix_stripping():
+    from csp.scheduler import get_dynamic_tags, MealScheduler
+    from csp.constraints import NutrientConstraints
+    
+    # 1. Chè exclusion from role_carb
+    che_food = {"name_vi": "Chè đậu đỏ ngọt", "canonical_name_en": "Sweet red bean soup", "category": "đồ_ăn_vặt"}
+    tags = get_dynamic_tags(che_food)
+    assert "role_carb" not in tags
+    
+    # 2. Suffix stripping check in scheduler helper
+    user = {
+        "daily_calorie_target": 2200,
+        "macro_ratios": {"protein": 0.30, "fat": 0.30, "carbs": 0.40},
+        "budget_vnd_max": 200000,
+        "exclude_snacks": True,
+    }
+    mock_foods = [
+        {"food_id": 1, "canonical_name_en": "Chicken Breast", "name_vi": "Ức gà nguyên chất", "calories": 165, "protein": 31, "fat": 3.6, "carbs": 0, "cost_vnd_100g": 15000, "category": "thịt_gia_cầm"},
+        {"food_id": 2, "canonical_name_en": "White Rice", "name_vi": "Cơm trắng", "calories": 130, "protein": 2.7, "fat": 0.3, "carbs": 28, "cost_vnd_100g": 1800, "category": "tinh_bột"},
+        {"food_id": 3, "canonical_name_en": "Cabbage", "name_vi": "Rau cải khô", "calories": 25, "protein": 1.3, "fat": 0.1, "carbs": 5.8, "cost_vnd_100g": 1500, "category": "rau_xanh"},
+    ]
+    scheduler = MealScheduler(user_profile=user, available_foods=mock_foods, db_url="")
+    
+    sol = {"breakfast": 1, "lunch": 1, "dinner": 1}
+    all_carbs = [mock_foods[1]]
+    all_proteins = [mock_foods[0]]
+    all_fibers = [mock_foods[2]]
+    
+    constraints = NutrientConstraints(
+        daily_calorie_target=2200.0,
+        macro_ratios={"protein": 0.30, "fat": 0.30, "carbs": 0.40},
+    )
+    
+    day_meals = scheduler._get_meal_plan_for_solution(
+        sol, constraints, 1.0,
+        all_carbs, all_proteins, all_fibers, [], day_excluded_ids=None
+    )
+    
+    # Check that "nguyên chất" and "khô" are stripped
+    breakfast_name = day_meals[0]["name"]
+    lunch_name = day_meals[1]["name"]
+    assert "nguyên chất" not in breakfast_name.lower()
+    assert "khô" not in lunch_name.lower()
+    assert "Ức gà" in breakfast_name
+    assert "Rau cải" in lunch_name
