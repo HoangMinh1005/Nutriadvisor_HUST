@@ -13,25 +13,19 @@ import os
 from pathlib import Path
 
 import psycopg
-
+from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
-DEFAULT_STRUCTURED_PATH = ROOT_DIR / "data" / "raw" / "final_nutrients_structured.csv"
+DEFAULT_STRUCTURED_PATH = ROOT_DIR / "data" / "raw" / "viendinhduong_nutrients.csv"
 DEFAULT_ALIAS_PATH = ROOT_DIR / "data" / "raw" / "food_aliases_vi.csv"
 DEFAULT_MANIFEST_PATH = ROOT_DIR / "data" / "raw" / "dataset_version_manifest.json"
 
-FOOD_GROUP_MAP = {
-    "Gia cầm": "gia_cam",
-    "Thịt đỏ": "thit_do",
-    "Hải sản": "hai_san",
-    "Rau củ": "rau_cu",
-    "Tinh bột": "tinh_bot",
-    "Hạt": "hat",
-    "Trái cây": "trai_cay",
-    "Sữa và chế phẩm": "sua_che_pham",
-    "Trứng": "trung",
-    "Khác": "khac",
-}
+load_dotenv(ROOT_DIR / "backend" / ".env")
+load_dotenv(ROOT_DIR / ".env")
+
+import sys
+sys.path.insert(0, str(ROOT_DIR))
+from csp.classification import classify_food
 
 
 def _clean_text(value: object) -> str:
@@ -100,7 +94,6 @@ def _reset_food_tables(cur: psycopg.Cursor) -> None:
             food_nutrients,
             meal_plans,
             food_search_logs,
-            food_tag_mapping,
             foods
         RESTART IDENTITY CASCADE;
         """
@@ -165,7 +158,74 @@ def _ensure_dataset_version(cur: psycopg.Cursor, version_tag: str, manifest_path
     return int(cur.fetchone()[0])
 
 
-def _load_foods(cur: psycopg.Cursor, rows: list[dict[str, str]], dataset_version_id: int) -> None:
+def get_food_group_code(category: str, name_vi: str, tags: list[str]) -> str:
+    category = category.strip()
+    name_vi = name_vi.lower()
+
+    if category == "Sữa và sản phẩm chế biến":
+        return "sua_che_pham"
+    elif category == "Ngũ cốc và sản phẩm chế biến":
+        return "tinh_bot"
+    elif category == "Đồ hộp":
+        # Check name for meat/fish
+        if any(k in name_vi for k in ["cá", "tôm", "trích", "thu", "nục", "ngừ", "hải sản"]):
+            return "hai_san"
+        elif any(k in name_vi for k in ["bò", "heo", "lợn", "pork", "beef"]):
+            return "thit_do"
+        elif any(k in name_vi for k in ["gà", "vịt", "chicken", "duck"]):
+            return "gia_cam"
+        return "khac"
+    elif category == "Đồ ngọt (đường, bánh, mứt, kẹo)":
+        if "trứng" in name_vi:
+            return "trung"
+        return "khac"
+    elif category == "Bơ, mỡ":
+        return "khac"
+    elif category == "Gia vị, nước chấm":
+        return "khac"
+    elif category == "Nước giải khát":
+        return "khac"
+    elif category == "Rau, quả và sản phẩm chế biến":
+        # Check tags or name to see if it's fruit
+        if "role_fiber" in tags or any(k in name_vi for k in ["chuối", "dứa", "mận", "nhãn", "vải", "cam", "bưởi", "xoài", "táo", "lê", "đu đủ", "dưa", "ổi", "nho", "bơ", "hồng", "quýt"]):
+            return "trai_cay"
+        return "rau_cu"
+    elif category == "Thịt, thủy sản và sản phẩm chế biến":
+        if any(k in name_vi for k in ["gà", "vịt", "chim", "ngan"]):
+            return "gia_cam"
+        elif any(k in name_vi for k in ["cá", "tôm", "cua", "ốc", "hến", "sò", "mực", "lươn", "trạch", "ếch"]):
+            return "hai_san"
+        elif any(k in name_vi for k in ["trứng"]):
+            return "trung"
+        else:
+            return "thit_do"
+    
+    return "khac"
+
+# check_category and classify_food_row removed and imported from csp.classification
+
+
+def _load_price_defaults() -> tuple[int, dict[str, int]]:
+    price_path = ROOT_DIR / "data" / "price_defaults_2.json"
+    if not price_path.exists():
+        print(f"Warning: {price_path} not found. Using default price 15000 VND/100g.")
+        return 15000, {}
+    try:
+        with open(price_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        global_avg = data.get("global_average_100g", 15000)
+        price_map = {}
+        for item in data.get("items", []):
+            key = item.get("canonical_key")
+            price = item.get("price_100g")
+            if key and price is not None:
+                price_map[key] = int(price)
+        return global_avg, price_map
+    except Exception as e:
+        print(f"Error loading price defaults: {e}. Using default price 15000 VND/100g.")
+        return 15000, {}
+
+def _load_foods(cur: psycopg.Cursor, rows: list[dict[str, str]], dataset_version_id: int, price_map: dict[str, int], global_avg: int) -> dict[str, int]:
     """Insert canonical foods with contiguous IDs, then load matching nutrient vectors."""
     unique_rows = _dedupe_rows_by_canonical_key(rows)
 
@@ -179,16 +239,33 @@ def _load_foods(cur: psycopg.Cursor, rows: list[dict[str, str]], dataset_version
         if not canonical_key:
             continue
 
-        group_code = FOOD_GROUP_MAP.get(_clean_text(row.get("category")), "khac")
-        food_group_id = group_map.get(group_code)
+        raw_tags = _clean_text(row.get("tags"))
+        tags = [t.strip().lower() for t in raw_tags.split(",") if t.strip()] if raw_tags else []
+        
+        category = _clean_text(row.get("category"))
+        name_vi = _clean_text(row.get("name_vi"))
+        group_code = get_food_group_code(category, name_vi, tags)
+        food_group_id = group_map.get(group_code, group_map.get("khac"))
+
+        price = price_map.get(canonical_key, global_avg)
+        price = price_map.get(canonical_key, global_avg)
+        from csp.classification import get_dynamic_tags
+        food_data = {
+            "name_vi": name_vi,
+            "category": category,
+            "tags": set(tags)
+        }
+        full_tags = get_dynamic_tags(food_data).union(tags)
+        food_data["tags"] = full_tags
+        meal_role = classify_food(food_data)
 
         cur.execute(
             """
             INSERT INTO foods (
                 food_id, canonical_key, canonical_name_en, name_vi, food_group_id,
                 source_name, source_priority, source_food_id, dataset_version_id,
-                confidence_score, is_estimated
-            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                confidence_score, is_estimated, price_100g_vnd, tags, meal_role
+            ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
             ON CONFLICT (canonical_key)
             DO UPDATE SET
                 canonical_name_en = EXCLUDED.canonical_name_en,
@@ -200,20 +277,26 @@ def _load_foods(cur: psycopg.Cursor, rows: list[dict[str, str]], dataset_version
                 dataset_version_id = EXCLUDED.dataset_version_id,
                 confidence_score = EXCLUDED.confidence_score,
                 is_estimated = EXCLUDED.is_estimated,
+                price_100g_vnd = EXCLUDED.price_100g_vnd,
+                tags = EXCLUDED.tags,
+                meal_role = EXCLUDED.meal_role,
                 updated_at = NOW();
             """,
             (
                 next_food_id,
                 canonical_key,
                 _clean_text(row.get("canonical_name_en") or row.get("name_en")),
-                _clean_text(row.get("name_vi")),
+                name_vi,
                 food_group_id,
-                _clean_text(row.get("source")) or "Kaggle",
-                int(_to_float(row.get("source_priority")) or 2),
+                _clean_text(row.get("source")) or "VDD",
+                int(_to_float(row.get("source_priority")) or 1),
                 _clean_text(row.get("source_id")),
                 dataset_version_id,
-                _to_float(row.get("confidence_score")) or 0.65,
+                _to_float(row.get("confidence_score")) or 1.0,
                 _to_bool(row.get("is_estimated")),
+                price,
+                list(full_tags),
+                meal_role,
             ),
         )
         food_id_by_key[canonical_key] = next_food_id
@@ -272,69 +355,12 @@ def _load_foods(cur: psycopg.Cursor, rows: list[dict[str, str]], dataset_version
                 _to_float(row.get("cholesterol_mg")),
                 _to_float(row.get("magnesium_mg")),
                 _to_float(row.get("transfat_mg")),
-                _clean_text(row.get("source")) or "Kaggle",
-                _to_float(row.get("confidence_score")) or 0.65,
+                _clean_text(row.get("source")) or "VDD",
+                _to_float(row.get("confidence_score")) or 1.0,
                 dataset_version_id,
             ),
         )
     return food_id_by_key
-
-
-
-
-def _load_tags(cur: psycopg.Cursor, rows: list[dict[str, str]], food_id_by_key: dict[str, int]) -> None:
-    """Load tags from CSV rows, insert unique ones into food_tags, and map them in food_tag_mapping."""
-    # First, collect all unique tag codes from the CSV
-    unique_tags = set()
-    for row in rows:
-        tags_str = _clean_text(row.get("tags"))
-        if tags_str:
-            for tag in tags_str.split(","):
-                tag = tag.strip().lower()
-                if tag:
-                    unique_tags.add(tag)
-
-    # Insert unique tags into food_tags table
-    for tag_code in sorted(unique_tags):
-        tag_name = tag_code.replace("_", " ").capitalize()
-        cur.execute(
-            """
-            INSERT INTO food_tags (tag_code, tag_name, description)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (tag_code) DO NOTHING;
-            """,
-            (tag_code, tag_name, f"Automatically generated tag for {tag_name}"),
-        )
-
-    # Select all tag ids to map code -> tag_id
-    cur.execute("SELECT tag_code, tag_id FROM food_tags;")
-    tag_id_map = {r[0]: r[1] for r in cur.fetchall()}
-
-    # Insert mappings
-    for row in rows:
-        canonical_key = _clean_text(row.get("canonical_key"))
-        food_id = food_id_by_key.get(canonical_key)
-        if not food_id:
-            continue
-
-        tags_str = _clean_text(row.get("tags"))
-        if not tags_str:
-            continue
-
-        for tag_code in tags_str.split(","):
-            tag_code = tag_code.strip().lower()
-            tag_id = tag_id_map.get(tag_code)
-            if not tag_id:
-                continue
-
-            cur.execute(
-                """
-                INSERT INTO food_tag_mapping (food_id, tag_id, confidence, assigned_by)
-                VALUES (%s, %s, 1.000, 'rule_engine')
-                ON CONFLICT (food_id, tag_id) DO NOTHING;
-                """,
-                (food_id, tag_id),
-            )
 
 
 def _load_aliases(cur: psycopg.Cursor, alias_rows: list[dict[str, str]]) -> None:
@@ -348,7 +374,7 @@ def _load_aliases(cur: psycopg.Cursor, alias_rows: list[dict[str, str]]) -> None
                 _clean_text(row.get("alias_lang")) or "vi",
                 _clean_text(row.get("alias_type")) or "display",
                 _to_bool(row.get("is_preferred")),
-                _clean_text(row.get("source")) or "NIN",
+                _clean_text(row.get("source")) or "VDD",
                 int(_to_float(row.get("source_priority")) or 1),
             )
         )
@@ -386,7 +412,7 @@ def _load_aliases(cur: psycopg.Cursor, alias_rows: list[dict[str, str]]) -> None
 def parse_args() -> argparse.Namespace:
     """Parse CLI arguments for structured, alias, manifest paths, and version tag."""
     parser = argparse.ArgumentParser(description="Load structured nutrition data into PostgreSQL")
-    parser.add_argument("--structured", default=str(DEFAULT_STRUCTURED_PATH), help="Path to final_nutrients_structured.csv")
+    parser.add_argument("--structured", default=str(DEFAULT_STRUCTURED_PATH), help="Path to viendinhduong_nutrients.csv")
     parser.add_argument("--aliases", default=str(DEFAULT_ALIAS_PATH), help="Path to food_aliases_vi.csv")
     parser.add_argument("--manifest", default=str(DEFAULT_MANIFEST_PATH), help="Path to dataset_version_manifest.json")
     parser.add_argument("--version-tag", default="v1.1.0", help="Dataset version tag")
@@ -413,6 +439,8 @@ def main() -> None:
     rows = _load_csv(structured_path)
     alias_rows = _load_csv(aliases_path)
 
+    global_avg, price_map = _load_price_defaults()
+
     with psycopg.connect(_database_url()) as conn:
         with conn.cursor() as cur:
             if args.reset:
@@ -425,8 +453,7 @@ def main() -> None:
                 source_name="structured_csv",
                 source_file=structured_path.name,
             )
-            food_id_by_key = _load_foods(cur, rows, dataset_version_id)
-            _load_tags(cur, rows, food_id_by_key)
+            food_id_by_key = _load_foods(cur, rows, dataset_version_id, price_map, global_avg)
             _load_aliases(cur, alias_rows)
         conn.commit()
 

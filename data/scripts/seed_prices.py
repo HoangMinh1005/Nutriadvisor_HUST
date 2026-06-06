@@ -57,16 +57,16 @@ Yêu cầu nghiêm ngặt:
 - Chỉ trả ra MỘT JSON thuần tuý (JSON object). KHÔNG CÓ ký tự markdown định dạng ` ```json ` hay text thừa xung quanh.
 """
 
-def load_food_records() -> List[dict[str, str]]:
+def load_food_records(raw_data_path: Path, source_filter: str) -> List[dict[str, str]]:
     records: list[dict[str, str]] = []
-    if not RAW_DATA_PATH.exists():
-        print(f"File not found: {RAW_DATA_PATH}")
+    if not raw_data_path.exists():
+        print(f"File not found: {raw_data_path}")
         return records
 
-    with open(RAW_DATA_PATH, "r", encoding="utf-8-sig") as f:
+    with open(raw_data_path, "r", encoding="utf-8-sig") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            if row.get("source", "").strip().upper() != SOURCE_FILTER:
+            if row.get("source", "").strip().upper() != source_filter:
                 continue
 
             source_id = row.get("source_id", "").strip()
@@ -205,6 +205,7 @@ def compose_output(
     by_canonical_key: dict[str, Any],
     by_name: dict[str, Any],
     by_source_id: dict[str, Any],
+    source_name: str,
 ) -> dict[str, Any]:
     items = build_item_records(records, by_canonical_key, by_name, by_source_id)
     categories: dict[str, list[int]] = {}
@@ -215,7 +216,7 @@ def compose_output(
 
     category_averages = {cat: int(sum(prices) / len(prices)) for cat, prices in categories.items() if prices}
     summary = {
-        "source": "NIN",
+        "source": source_name,
         "schema_version": 2,
         "total_source_records": len(records),
         "total_items": len(items),
@@ -238,16 +239,16 @@ def compose_output(
     }
 
 
-def load_existing_results() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+def load_existing_results(output_path: Path) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     existing_by_canonical_key: dict[str, Any] = {}
     existing_by_name: dict[str, Any] = {}
     existing_by_source_id: dict[str, Any] = {}
 
-    if not OUTPUT_PATH.exists():
+    if not output_path.exists():
         return existing_by_canonical_key, existing_by_name, existing_by_source_id
 
     try:
-        with open(OUTPUT_PATH, "r", encoding="utf-8") as f:
+        with open(output_path, "r", encoding="utf-8") as f:
             loaded = json.load(f)
     except Exception:
         print("Could not load existing file, starting fresh.")
@@ -275,12 +276,19 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Seed prices from Gemini API.")
     parser.add_argument("--batch-size", type=int, default=50, help="Number of items per Gemini prompt.")
     parser.add_argument("--limit", type=int, default=0, help="Max items to process mode (0 = all).")
+    parser.add_argument("--raw-data", type=str, default=str(RAW_DATA_PATH), help="Path to raw CSV dataset.")
+    parser.add_argument("--output", type=str, default=str(OUTPUT_PATH), help="Path to output seeded JSON.")
+    parser.add_argument("--source", type=str, default=SOURCE_FILTER, help="Source database filter (e.g. NIN, VDD).")
     args = parser.parse_args()
 
-    existing_by_canonical_key, existing_by_name, existing_by_source_id = load_existing_results()
+    raw_data_path = Path(args.raw_data)
+    output_path = Path(args.output)
+    source_filter = args.source.strip().upper()
 
-    all_records = load_food_records()
-    print(f"Total NIN records in structured CSV: {len(all_records)}")
+    existing_by_canonical_key, existing_by_name, existing_by_source_id = load_existing_results(output_path)
+
+    all_records = load_food_records(raw_data_path, source_filter)
+    print(f"Total {source_filter} records in structured CSV: {len(all_records)}")
 
     unique_records_by_key: dict[str, dict[str, str]] = {}
     for record in all_records:
@@ -341,9 +349,9 @@ def main() -> None:
                     retries -= 1
         
         if success:
-            with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+            with open(output_path, "w", encoding="utf-8") as f:
                 json.dump(
-                    compose_output(all_records, existing_by_canonical_key, existing_by_name, existing_by_source_id),
+                    compose_output(all_records, existing_by_canonical_key, existing_by_name, existing_by_source_id, source_filter),
                     f,
                     ensure_ascii=False,
                     indent=2,
@@ -354,26 +362,27 @@ def main() -> None:
             break
 
     # Expand canonical price estimates back onto every source record.
-    with open(OUTPUT_PATH, "w", encoding="utf-8") as f:
+    with open(output_path, "w", encoding="utf-8") as f:
         json.dump(
-            compose_output(all_records, existing_by_canonical_key, existing_by_name, existing_by_source_id),
+            compose_output(all_records, existing_by_canonical_key, existing_by_name, existing_by_source_id, source_filter),
             f,
             ensure_ascii=False,
             indent=2,
         )
 
-    print(f"Done. Processed results saved to {OUTPUT_PATH}")
+    print(f"Done. Processed results saved to {output_path}")
     
     # Sanity checks
     print("\n--- Sanity Check ---")
     suspects = 0
     categories = {}
     
-    final_output = compose_output(all_records, existing_by_canonical_key, existing_by_name, existing_by_source_id)
+    final_output = compose_output(all_records, existing_by_canonical_key, existing_by_name, existing_by_source_id, source_filter)
 
     for item in final_output["items"]:
         price = item.get("price_100g", 0)
         category = item.get("category", "khong_xac_dinh")
+        food_name = item.get("name_vi", item.get("canonical_key", "Unknown"))
         
         if category not in categories:
             categories[category] = []
@@ -395,7 +404,7 @@ def main() -> None:
         if prices:
             category_averages[cat] = int(sum(prices) / len(prices))
     
-    defaults_path = ROOT_DIR / "data" / "price_defaults.json"
+    defaults_path = raw_data_path.parent.parent / "price_defaults.json"
     
     price_defaults = {
         "schema_version": 2,

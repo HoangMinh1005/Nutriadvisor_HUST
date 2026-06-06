@@ -72,6 +72,11 @@ CREATE TABLE IF NOT EXISTS foods (
         CHECK (confidence_score >= 0 AND confidence_score <= 1),
     is_estimated BOOLEAN NOT NULL DEFAULT FALSE,
     is_active BOOLEAN NOT NULL DEFAULT TRUE,
+    price_100g_vnd INTEGER NOT NULL DEFAULT 15000
+        CHECK (price_100g_vnd >= 0),
+    tags TEXT[] NOT NULL DEFAULT '{}',
+    meal_role VARCHAR(40) NOT NULL DEFAULT 'ACCESSORY_CONDIMENT'
+        CHECK (meal_role IN ('ACCESSORY_CONDIMENT', 'STAPLE_CARB', 'MAIN_PROTEIN', 'FIBER_SIDE')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -109,29 +114,6 @@ CREATE TABLE IF NOT EXISTS food_nutrients (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
--- Table: food_price_estimates
--- Purpose: estimated market price per canonical food, sourced from seeded heuristics/LLM
-CREATE TABLE IF NOT EXISTS food_price_estimates (
-    food_id BIGINT PRIMARY KEY REFERENCES foods(food_id)
-        ON UPDATE CASCADE
-        ON DELETE CASCADE,
-    price_100g_vnd INTEGER NOT NULL
-        CHECK (price_100g_vnd > 0),
-    price_category VARCHAR(80) NOT NULL,
-    price_source VARCHAR(40) NOT NULL DEFAULT 'gemini',
-    model_name VARCHAR(80),
-    estimate_version VARCHAR(40),
-    confidence_score NUMERIC(4,3) NOT NULL DEFAULT 0.700
-        CHECK (confidence_score >= 0 AND confidence_score <= 1),
-    source_key VARCHAR(255),
-    source_name_vi VARCHAR(255),
-    dataset_version_id BIGINT REFERENCES dataset_versions(dataset_version_id)
-        ON UPDATE CASCADE
-        ON DELETE SET NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
 -- Table: food_aliases
 -- Purpose: multilingual search aliases and display variants
 CREATE TABLE IF NOT EXISTS food_aliases (
@@ -149,34 +131,6 @@ CREATE TABLE IF NOT EXISTS food_aliases (
         CHECK (source_priority BETWEEN 1 AND 10),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT uq_food_alias UNIQUE (food_id, alias_lang, alias_text)
-);
-
--- Table: food_tags
--- Purpose: expert-system labels used by rule logic and filtering
-CREATE TABLE IF NOT EXISTS food_tags (
-    tag_id SERIAL PRIMARY KEY,
-    tag_code VARCHAR(60) NOT NULL UNIQUE,
-    tag_name VARCHAR(100) NOT NULL,
-    description TEXT,
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    CHECK (tag_code ~ '^[a-z0-9_]+$')
-);
-
--- Table: food_tag_mapping
--- Purpose: many-to-many relation between foods and expert tags
-CREATE TABLE IF NOT EXISTS food_tag_mapping (
-    food_id BIGINT NOT NULL REFERENCES foods(food_id)
-        ON UPDATE CASCADE
-        ON DELETE CASCADE,
-    tag_id INTEGER NOT NULL REFERENCES food_tags(tag_id)
-        ON UPDATE CASCADE
-        ON DELETE CASCADE,
-    confidence NUMERIC(4,3) NOT NULL DEFAULT 1.000
-        CHECK (confidence >= 0 AND confidence <= 1),
-    assigned_by VARCHAR(30) NOT NULL DEFAULT 'rule_engine',
-    assigned_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    PRIMARY KEY (food_id, tag_id)
 );
 
 -- Table: food_search_logs
@@ -261,15 +215,12 @@ CREATE INDEX IF NOT EXISTS idx_foods_canonical_key ON foods(canonical_key);
 CREATE INDEX IF NOT EXISTS idx_food_nutrients_energy_kcal ON food_nutrients(energy_kcal);
 CREATE INDEX IF NOT EXISTS idx_food_nutrients_protein_g ON food_nutrients(protein_g);
 
-CREATE INDEX IF NOT EXISTS idx_food_price_estimates_price_100g_vnd ON food_price_estimates(price_100g_vnd);
-CREATE INDEX IF NOT EXISTS idx_food_price_estimates_price_category ON food_price_estimates(price_category);
-CREATE INDEX IF NOT EXISTS idx_food_price_estimates_price_source ON food_price_estimates(price_source);
+CREATE INDEX IF NOT EXISTS idx_foods_price_100g_vnd ON foods(price_100g_vnd);
+CREATE INDEX IF NOT EXISTS idx_foods_tags ON foods USING GIN (tags);
 
 CREATE INDEX IF NOT EXISTS idx_food_aliases_food_id ON food_aliases(food_id);
 CREATE INDEX IF NOT EXISTS idx_food_aliases_alias_lang ON food_aliases(alias_lang);
 CREATE INDEX IF NOT EXISTS idx_food_aliases_alias_text_trgm ON food_aliases USING GIN (alias_text gin_trgm_ops);
-
-CREATE INDEX IF NOT EXISTS idx_food_tag_mapping_tag_id ON food_tag_mapping(tag_id);
 
 CREATE INDEX IF NOT EXISTS idx_food_search_logs_created_at ON food_search_logs(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_food_search_logs_normalized_query ON food_search_logs(normalized_query);

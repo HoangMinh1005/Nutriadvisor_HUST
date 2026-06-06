@@ -1,0 +1,26 @@
+Loaded 853 foods from offline fallback.
+Classifications count: {'MAIN_PROTEIN': 264, 'ACCESSORY_CONDIMENT': 313, 'STAPLE_CARB': 76, 'FIBER_SIDE': 200}
+
+Sample fiber foods:
+ID=50 Name=Chuối nước đường Category=Đồ hộp Role=ACCESSORY_CONDIMENT Tags={'is_processed', 'role_fiber'}
+ID=57 Name=Mứt cam có vỏ Category=Đồ hộp Role=ACCESSORY_CONDIMENT Tags={'role_fiber'}
+ID=58 Name=Mứt chuối Category=Đồ hộp Role=ACCESSORY_CONDIMENT Tags={'role_fiber'}
+ID=89 Name=Kẹo cam chanh Category=Đồ ngọt (đường, bánh, mứt, kẹo) Role=ACCESSORY_CONDIMENT Tags={'role_fiber', 'is_dessert_snack'}
+ID=102 Name=Thạch POKE hương trái cây  Category=Đồ ngọt (đường, bánh, mứt, kẹo) Role=ACCESSORY_CONDIMENT Tags={'role_fiber', 'is_dessert_snack'}
+ID=167 Name=Nước cam tươi Category=Nước giải khát Role=ACCESSORY_CONDIMENT Tags={'role_fiber'}
+ID=172 Name=Rượu cam, chanh (cồn 24,2 g) Category=Nước giải khát Role=ACCESSORY_CONDIMENT Tags={'role_fiber'}
+ID=193 Name=Bánh chuối Category=Thức ăn truyền thống Role=ACCESSORY_CONDIMENT Tags={'role_fiber'}
+ID=197 Name=Bánh dẻo nhân thập cẩm Category=Thức ăn truyền thống Role=STAPLE_CARB Tags={'role_carb', 'role_fiber'}
+ID=203 Name=Bánh giò Category=Thức ăn truyền thống Role=STAPLE_CARB Tags={'role_carb', 'role_fiber'}
+ID=212 Name=Bánh nướng nhân thập cẩm Category=Thức ăn truyền thống Role=ACCESSORY_CONDIMENT Tags={'role_fiber'}
+ID=232 Name=Chè chuối Category=Thức ăn truyền thống Role=ACCESSORY_CONDIMENT Tags={'role_fiber', 'is_dessert_snack'}
+ID=247 Name=Mỳ xào Category=Thức ăn truyền thống Role=FIBER_SIDE Tags={'role_fiber'}
+ID=250 Name=Nộm tai lợn Category=Thức ăn truyền thống Role=FIBER_SIDE Tags={'clean_protein', 'role_fiber', 'allergen_pork', 'role_protein'}
+ID=256 Name=Xôi gấc Category=Thức ăn truyền thống Role=STAPLE_CARB Tags={'role_carb', 'role_fiber'}
+ID=301 Name=Cùi dừa già, tươi Category=Hạt, quả giàu đạm, béo và sản phẩm chế biến Role=FIBER_SIDE Tags={'role_fiber'}
+ID=302 Name=Cùi dừa non, tươi Category=Hạt, quả giàu đạm, béo và sản phẩm chế biến Role=FIBER_SIDE Tags={'role_fiber'}
+ID=303 Name=Đậu cô ve, hạt, khô Category=Hạt, quả giàu đạm, béo và sản phẩm chế biến Role=ACCESSORY_CONDIMENT Tags={'is_dried', 'role_fiber'}
+ID=304 Name=Đậu đen, hạt, khô Category=Hạt, quả giàu đạm, béo và sản phẩm chế biến Role=ACCESSORY_CONDIMENT Tags={'is_dried', 'role_fiber'}
+ID=305 Name=Đậu đũa, hạt, khô Category=Hạt, quả giàu đạm, béo và sản phẩm chế biến Role=ACCESSORY_CONDIMENT Tags={'is_dried', 'role_fiber'}
+Solver Result Feasible: False
+Relaxation attempts made: 4

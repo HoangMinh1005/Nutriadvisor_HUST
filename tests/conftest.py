@@ -7,6 +7,11 @@ from typing import Generator
 
 import psycopg
 import pytest
+from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT_DIR / "backend" / ".env")
+load_dotenv(ROOT_DIR / ".env")
 
 
 def pytest_configure(config):
@@ -25,9 +30,6 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.unit)
         if "integration" in str(item.fspath):
             item.add_marker(pytest.mark.integration)
-
-
-ROOT_DIR = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture(scope="session")
@@ -205,7 +207,7 @@ def sample_alias_rows() -> list[dict[str, str]]:
 @pytest.fixture
 def csv_path() -> Path:
     """Get path to test CSV file."""
-    return ROOT_DIR / "data" / "raw" / "final_nutrients_structured.csv"
+    return ROOT_DIR / "data" / "raw" / "viendinhduong_nutrients.csv"
 
 
 @pytest.fixture

@@ -17,10 +17,13 @@ from pathlib import Path
 from urllib.parse import quote_plus
 
 import psycopg
-
+from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 DEFAULT_MIGRATIONS_DIR = ROOT_DIR / "data" / "sql" / "init"
+
+load_dotenv(ROOT_DIR / "backend" / ".env")
+load_dotenv(ROOT_DIR / ".env")
 
 
 def _database_url() -> str:
