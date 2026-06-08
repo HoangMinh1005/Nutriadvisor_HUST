@@ -232,6 +232,21 @@ def test_food_tagging():
     assert "allergen_seafood" not in milk_tags
 
 
+def test_dietary_restriction_filtering():
+    from csp.classification import violates_dietary_restrictions
+
+    chicken = {"name_vi": "ức gà tươi", "canonical_name_en": "Chicken breast", "category": "thịt_gia_cầm"}
+    egg = {"name_vi": "trứng gà", "canonical_name_en": "Egg, whole", "category": "trứng"}
+    tofu = {"name_vi": "đậu phụ", "canonical_name_en": "Tofu", "category": "đậu"}
+    pork = {"name_vi": "thịt heo nạc", "canonical_name_en": "Pork lean", "category": "thịt_lợn"}
+
+    assert violates_dietary_restrictions(chicken, ["vegetarian"]) is True
+    assert violates_dietary_restrictions(egg, ["vegetarian"]) is False
+    assert violates_dietary_restrictions(egg, ["vegan"]) is True
+    assert violates_dietary_restrictions(tofu, ["vegan"]) is False
+    assert violates_dietary_restrictions(pork, ["halal"]) is True
+
+
 def test_che_exclusion_and_suffix_stripping():
     from csp.scheduler import get_dynamic_tags, MealScheduler
     from csp.constraints import NutrientConstraints

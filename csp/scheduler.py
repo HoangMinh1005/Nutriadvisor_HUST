@@ -50,6 +50,7 @@ from .classification import (
     is_standalone_main_dish,
     get_food_role,
     clean_category,
+    violates_dietary_restrictions,
 )
 
 
@@ -79,6 +80,8 @@ class MealScheduler:
             f["max_serving_g"] = get_max_serving_g(f, self.is_gym)
             
         self.food_by_id = {int(f["food_id"]): f for f in self.foods}
+        self._food_roles_cache: Dict[int, str] | None = None
+        self._food_name_low_cache: Dict[int, str] | None = None
 
     def _load_foods(self) -> List[Dict[str, Any]]:
         """Load candidate foods from PostgreSQL, falling back to a sample list for offline unit testing."""
@@ -148,6 +151,141 @@ class MealScheduler:
         except Exception as exc:
             raise ConnectionError(f"CRITICAL: Failed to load food records natively from PostgreSQL: {exc}")
 
+    def _get_food_roles_cache(self) -> Dict[int, str]:
+        if self._food_roles_cache is None:
+            self._food_roles_cache = {
+                int(f["food_id"]): classify_food(f)
+                for f in self.foods
+            }
+        return self._food_roles_cache
+
+    def _get_food_name_low_cache(self) -> Dict[int, str]:
+        if self._food_name_low_cache is None:
+            self._food_name_low_cache = {
+                int(f["food_id"]): str(f.get("name_vi") or "").lower()
+                for f in self.foods
+            }
+        return self._food_name_low_cache
+
+    def _build_domain_context(self, domain_foods: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Precompute domain-level classifications that are reused across CSP attempts."""
+        food_roles_cache = self._get_food_roles_cache()
+        food_name_low = self._get_food_name_low_cache()
+
+        all_carbs, all_proteins, all_fibers, all_snacks = [], [], [], []
+        fallback_carbs, fallback_proteins, fallback_fibers = [], [], []
+        breakfast_ids, lunch_ids, dinner_ids, snack_ids = [], [], [], []
+        offal_ids: Set[int] = set()
+        gym_priority: Dict[int, int] = {}
+
+        allergy_input = [str(a).lower() for a in (self.user.get("allergies") or [])]
+        has_seafood_allergy = any(("hải sản" in a or "seafood" in a) for a in allergy_input if a.strip())
+
+        for f in domain_foods:
+            fid = int(f["food_id"])
+            role = food_roles_cache[fid]
+            tags = f.get("tags") or set()
+            cat_clean = clean_category(f.get("category"))
+            name_vi = food_name_low.get(fid, "")
+
+            if role == "STAPLE_CARB":
+                fallback_carbs.append(f)
+            elif role == "MAIN_PROTEIN":
+                fallback_proteins.append(f)
+            elif role == "FIBER_SIDE":
+                fallback_fibers.append(f)
+
+            if role == "ACCESSORY_CONDIMENT":
+                if "is_dessert_snack" in tags or cat_clean == "trai_cay":
+                    all_snacks.append(f)
+                continue
+
+            if role == "STAPLE_CARB":
+                all_carbs.append(f)
+            elif role == "MAIN_PROTEIN":
+                all_proteins.append(f)
+            elif role == "FIBER_SIDE":
+                all_fibers.append(f)
+
+            if has_seafood_allergy and any(k in name_vi for k in ["trai", "hến", "nghêu", "sò", "ốc", "hàu", "tôm", "cua", "mực", "sứa", "bề bề"]):
+                continue
+            if any(k in name_vi for k in ["châu chấu", "chau chau", "cào cào", "cao cao", "nhộng", "nhong", "đuông dừa"]):
+                continue
+
+            if any(k in name_vi for k in ["giò lụa", "gio lua", "chả quế", "cha que", "chả lụa"]):
+                f["max_serving_g"] = 120.0
+
+            is_valid_vietnamese_breakfast = any(k in name_vi for k in ["bún", "miến", "phở", "cháo", "xôi", "bánh mì", "bánh mỳ", "bánh cuốn"])
+            is_snack_cake = any(k in name_vi for k in ["bánh nếp", "bánh trôi", "bánh chay", "bánh tẻ", "bánh gio", "bánh cốm", "bánh rán", "bánh đa nem", "bánh quẩy", "bánh mì, vuông, ngọt"])
+
+            if is_valid_vietnamese_breakfast and not is_snack_cake:
+                breakfast_ids.append(fid)
+            if role == "MAIN_PROTEIN" and not is_snack_cake:
+                lunch_ids.append(fid)
+                dinner_ids.append(fid)
+            snack_ids.append(fid)
+
+            if is_offal_or_blood(f):
+                offal_ids.add(fid)
+
+            if self.is_gym:
+                is_clean = "clean_protein" in tags or is_clean_protein_gym(f)
+                if is_clean:
+                    if any(k in name_vi for k in ["ức gà", "lườn gà", "gà công nghiệp", "cá hồi", "cá ngừ", "cá quả", "cá chép", "thăn bò", "bắp bò"]):
+                        gym_priority[fid] = 0
+                    else:
+                        gym_priority[fid] = 1
+                else:
+                    gym_priority[fid] = 2
+
+        effective_carbs = all_carbs or fallback_carbs
+        effective_proteins = all_proteins or fallback_proteins
+        effective_fibers = all_fibers or fallback_fibers
+        if not all_snacks:
+            all_snacks = domain_foods
+
+        rice_food = next(
+            (f for f in effective_carbs if any(k in food_name_low.get(int(f["food_id"]), "") for k in ["cơm tẻ", "cơm trắng", "cơm chín"])),
+            None,
+        )
+        if not rice_food and effective_carbs:
+            rice_food = effective_carbs[0]
+
+        alternative_carbs = [
+            f for f in effective_carbs
+            if not any(k in food_name_low.get(int(f["food_id"]), "") for k in ["cơm tẻ", "cơm trắng", "cơm chín", "bánh ngọt", "bánh trôi", "bánh chay"])
+        ]
+        clean_proteins = [f for f in effective_proteins if is_clean_protein_gym(f)]
+
+        unique_breakfast_ids = list(dict.fromkeys(breakfast_ids))
+        unique_lunch_ids = list(dict.fromkeys(lunch_ids))
+        unique_dinner_ids = list(dict.fromkeys(dinner_ids))
+        unique_snack_ids = list(dict.fromkeys(snack_ids))
+        unique_lunch_ids.sort(key=lambda fid: gym_priority.get(fid, 2))
+        unique_dinner_ids.sort(key=lambda fid: gym_priority.get(fid, 2))
+
+        return {
+            "roles": food_roles_cache,
+            "names": food_name_low,
+            "all_carbs": effective_carbs,
+            "all_proteins": effective_proteins,
+            "all_fibers": effective_fibers,
+            "all_snacks": all_snacks,
+            "rice_food": rice_food,
+            "alternative_carbs": alternative_carbs,
+            "clean_proteins": clean_proteins,
+            "clean_fibers": effective_fibers,
+            "fallback_carbs": [int(f["food_id"]) for f in fallback_carbs[:30]],
+            "fallback_proteins": [int(f["food_id"]) for f in fallback_proteins[:30]],
+            "breakfast_ids": unique_breakfast_ids,
+            "lunch_ids": unique_lunch_ids,
+            "dinner_ids": unique_dinner_ids,
+            "snack_ids": unique_snack_ids,
+            "offal_ids": offal_ids,
+            "gym_priority": gym_priority,
+            "has_allergies": bool(self.user.get("allergies")),
+        }
+
     def solve_with_relaxation(self, max_attempts: int = 4) -> Dict[str, Any]:
         """Solver orchestration wrapping the auto-relaxation loops."""
         constraints = NutrientConstraints(
@@ -165,10 +303,23 @@ class MealScheduler:
             domain_foods = [f for f in domain_foods if int(f["food_id"]) in self.candidate_food_ids]
         if constraints.allergies:
             domain_foods = [f for f in domain_foods if constraints.check_allergies([f])]
+        dietary_restrictions = self.user.get("dietary_restrictions") or []
+        if dietary_restrictions:
+            domain_foods = [f for f in domain_foods if not violates_dietary_restrictions(f, dietary_restrictions)]
         if self.is_gym:
             domain_foods = [f for f in domain_foods if not is_gym_blacklisted(f)]
+        if not domain_foods:
+            return {
+                "status": "infeasible",
+                "feasible": False,
+                "meal_plan": [],
+                "relaxation_attempts": 0,
+            }
 
-        MAX_DOMAIN_SIZE = 250
+        MAX_DOMAIN_SIZE = 180
+        candidate_rank = {
+            int(fid): idx for idx, fid in enumerate(self.candidate_food_ids or [])
+        }
         if len(domain_foods) > MAX_DOMAIN_SIZE:
             def domain_sort_key(f):
                 fid = int(f["food_id"])
@@ -187,17 +338,14 @@ class MealScheduler:
                     else:
                         is_clean_p = 3
                 
-                sim_idx = 0
-                if self.candidate_food_ids is not None:
-                    try:
-                        sim_idx = self.candidate_food_ids.index(fid)
-                    except ValueError:
-                        sim_idx = len(self.candidate_food_ids)
+                sim_idx = candidate_rank.get(fid, len(candidate_rank))
                         
                 return (src_pri, is_clean_p, sim_idx) if self.is_gym else (src_pri, sim_idx)
 
             domain_foods.sort(key=domain_sort_key)
             domain_foods = domain_foods[:MAX_DOMAIN_SIZE]
+
+        domain_context = self._build_domain_context(domain_foods)
 
         attempt = 1
         tolerance_multiplier = 1.0
@@ -206,7 +354,7 @@ class MealScheduler:
             logging.getLogger(__name__).info(
                 "CSP Solve Attempt %s/%s (multiplier=%.2f)", attempt, max_attempts, tolerance_multiplier
             )
-            result = self._solve(domain_foods, constraints, tolerance_multiplier)
+            result = self._solve(domain_foods, constraints, tolerance_multiplier, domain_context)
             if result["feasible"]:
                 result["relaxation_attempts"] = attempt
                 return result
@@ -232,6 +380,10 @@ class MealScheduler:
         all_snacks: List[Dict[str, Any]],
         day_excluded_ids: Set[int] | None = None,
         cached_roles: Dict[int, str] | None = None,
+        rice_food: Dict[str, Any] | None = None,
+        alternative_carbs: List[Dict[str, Any]] | None = None,
+        clean_proteins: List[Dict[str, Any]] | None = None,
+        clean_fibers: List[Dict[str, Any]] | None = None,
     ) -> List[Dict[str, Any]]:
         """Dynamic cross-scaling solver that structurally builds verified Vietnamese meal plans."""
         def get_complementary(pool, excluded_ids=None, filter_chả_cá=False):
@@ -255,15 +407,22 @@ class MealScheduler:
                 return cached_roles.get(int(food_item["food_id"]), "ACCESSORY_CONDIMENT")
             return classify_food(food_item)
 
-        rice_food = next((f for f in self.foods if any(k in str(f.get("name_vi")).lower() for k in ["cơm tẻ", "cơm trắng", "cơm chín"])), None)
         if not rice_food and all_carbs:
-            rice_food = all_carbs[0]
+            rice_food = next((f for f in all_carbs if any(k in str(f.get("name_vi")).lower() for k in ["cơm tẻ", "cơm trắng", "cơm chín"])), None) or all_carbs[0]
 
-        alternative_carbs = [
-            f for f in self.foods 
-            if fast_classify(f) == "STAPLE_CARB" 
-            and not any(k in str(f.get("name_vi")).lower() for k in ["cơm tẻ", "cơm trắng", "cơm chín", "bánh ngọt", "bánh trôi", "bánh chay"])
-        ]
+        if alternative_carbs is None:
+            alternative_carbs = [
+                f for f in all_carbs
+                if fast_classify(f) == "STAPLE_CARB"
+                and not any(k in str(f.get("name_vi")).lower() for k in ["cơm tẻ", "cơm trắng", "cơm chín", "bánh ngọt", "bánh trôi", "bánh chay"])
+            ]
+        if clean_proteins is None:
+            clean_proteins = [f for f in all_proteins if is_clean_protein_gym(f)]
+        if clean_fibers is None:
+            clean_fibers = [
+                f for f in all_fibers
+                if fast_classify(f) == "FIBER_SIDE"
+            ]
 
         components = []
         excluded_ids = set()
@@ -272,7 +431,7 @@ class MealScheduler:
         b_core = self.food_by_id[sol["breakfast"]]
         components.append({"slot": "breakfast", "food": b_core, "role": "core"})
         if self.is_gym and all_proteins and not is_standalone_main_dish(b_core):
-            comp_b_prot = get_complementary([f for f in all_proteins if is_clean_protein_gym(f)], excluded_ids)
+            comp_b_prot = get_complementary(clean_proteins, excluded_ids)
             if comp_b_prot:
                 components.append({"slot": "breakfast", "food": comp_b_prot, "role": "protein"})
                 excluded_ids.add(comp_b_prot["food_id"])
@@ -286,7 +445,6 @@ class MealScheduler:
             if is_standalone:
                 components.append({"slot": slot, "food": core_protein, "role": "core"})
                 if all_fibers:
-                    clean_fibers = [f for f in all_fibers if fast_classify(f) == "FIBER_SIDE"]
                     comp_fiber = get_complementary(clean_fibers if clean_fibers else all_fibers, excluded_ids)
                     if comp_fiber:
                         components.append({"slot": slot, "food": comp_fiber, "role": "fiber"})
@@ -313,11 +471,11 @@ class MealScheduler:
                 excluded_ids.add(actual_protein_food["food_id"])
                 
                 if all_fibers:
-                    clean_fibers = [
-                        f for f in all_fibers 
-                        if f["food_id"] != chosen_carb["food_id"] and fast_classify(f) == "FIBER_SIDE"
+                    clean_fibers_for_carb = [
+                        f for f in clean_fibers
+                        if f["food_id"] != chosen_carb["food_id"]
                     ]
-                    comp_fiber = get_complementary(clean_fibers if clean_fibers else all_fibers, excluded_ids)
+                    comp_fiber = get_complementary(clean_fibers_for_carb if clean_fibers_for_carb else all_fibers, excluded_ids)
                     if comp_fiber:
                         components.append({"slot": slot, "food": comp_fiber, "role": "fiber"})
                         excluded_ids.add(comp_fiber["food_id"])
@@ -475,7 +633,7 @@ class MealScheduler:
                 "meal_type": slot,
                 "food_id": slot_comps[0]["food"]["food_id"],
                 "name": " + ".join(names_vi),
-                "cost_vnd_100g": meal_cost,
+                "total_cost_vnd": meal_cost,
                 "calories": meal_cal,
                 "protein": meal_p,
                 "fat": meal_f,
@@ -486,118 +644,66 @@ class MealScheduler:
 
         return day_meals
 
-    def _solve(self, domain_foods: List[Dict[str, Any]], constraints: NutrientConstraints, tolerance_multiplier: float) -> Dict[str, Any]:
+    def _solve(
+        self,
+        domain_foods: List[Dict[str, Any]],
+        constraints: NutrientConstraints,
+        tolerance_multiplier: float,
+        domain_context: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """Core sequential CSP engine with optimized pricing heuristics."""
         
-        # Pre-calculate roles cache
-        food_roles_cache: Dict[int, str] = {}
-        for f in self.foods:
-            food_roles_cache[int(f["food_id"])] = classify_food(f)
-
-        all_carbs, all_proteins, all_fibers, all_snacks = [], [], [], []
-        for f in self.foods:
-            role = food_roles_cache[int(f["food_id"])]
-            tags = f.get("tags") or set()
-            cat_clean = clean_category(f.get("category"))
-            
-            if role == "ACCESSORY_CONDIMENT":
-                if "is_dessert_snack" in tags or cat_clean == "trai_cay":
-                    all_snacks.append(f)
-                continue
-            if role == "STAPLE_CARB": all_carbs.append(f)
-            elif role == "MAIN_PROTEIN": all_proteins.append(f)
-            elif role == "FIBER_SIDE": all_fibers.append(f)
-
-        if tolerance_multiplier >= 1.25 or not all_carbs or not all_proteins or not all_fibers:
-            if not all_carbs: all_carbs = [x for x in self.foods if food_roles_cache[int(x["food_id"])] == "STAPLE_CARB"]
-            if not all_proteins: all_proteins = [x for x in self.foods if food_roles_cache[int(x["food_id"])] == "MAIN_PROTEIN"]
-            if not all_fibers: all_fibers = [x for x in self.foods if food_roles_cache[int(x["food_id"])] == "FIBER_SIDE"]
-        if not all_snacks: all_snacks = self.foods
+        food_roles_cache = domain_context["roles"]
+        food_name_low = domain_context["names"]
+        all_carbs = domain_context["all_carbs"]
+        all_proteins = domain_context["all_proteins"]
+        all_fibers = domain_context["all_fibers"]
+        all_snacks = domain_context["all_snacks"]
 
         exclude_snacks = self.user.get("exclude_snacks", False)
         scheduled_plan = []
         used_food_ids = []
         offal_blood_count = 0
 
-        allergy_input = [str(a).lower() for a in (self.user.get("allergies") or [])]
-        has_seafood_allergy = any(("hải sản" in a or "seafood" in a) for a in allergy_input if a.strip())
-
         for day in range(7):
             global_counts = Counter(used_food_ids)
-            breakfast_foods, lunch_foods, dinner_foods, snack_foods = [], [], [], []
-            
-            day_domain = domain_foods
-            if self.is_gym or offal_blood_count >= 1:
-                day_domain = [f for f in day_domain if not is_offal_or_blood(f)]
-                
-            for f in day_domain:
-                fid = int(f["food_id"])
-                role = food_roles_cache[fid]
-                name_vi = str(f.get("name_vi") or "").lower()
-                
-                if role == "ACCESSORY_CONDIMENT": continue
-                if global_counts[fid] >= 3 and not ("cơm" in name_vi or "com" in name_vi): continue
-                
-                if has_seafood_allergy:
-                    if any(k in name_vi for k in ["trai", "hến", "nghêu", "sò", "ốc", "hàu", "tôm", "cua", "mực", "sứa", "bề bề"]):
-                        continue
+            block_offal = self.is_gym or offal_blood_count >= 1
+            offal_ids = domain_context["offal_ids"]
 
-                if any(k in name_vi for k in ["châu chấu", "chau chau", "cào cào", "cao cao", "nhộng", "nhong", "đuông dừa"]):
-                    continue
+            def is_available_today(fid: int) -> bool:
+                name_vi = food_name_low.get(fid, "")
+                if block_offal and fid in offal_ids:
+                    return False
+                if global_counts[fid] >= 3 and not ("cơm" in name_vi or "com" in name_vi):
+                    return False
+                return True
 
-                if any(k in name_vi for k in ["giò lụa", "gio lua", "chả quế", "cha que", "chả lụa"]):
-                    f["max_serving_g"] = 120.0
+            breakfast_candidates = [fid for fid in domain_context["breakfast_ids"] if is_available_today(fid)]
+            lunch_candidates = [fid for fid in domain_context["lunch_ids"] if is_available_today(fid)]
+            dinner_candidates = [fid for fid in domain_context["dinner_ids"] if is_available_today(fid)]
+            snack_foods = [fid for fid in domain_context["snack_ids"] if is_available_today(fid)]
 
-                is_valid_vietnamese_breakfast = any(k in name_vi for k in ["bún", "miến", "phở", "cháo", "xôi", "bánh mì", "bánh mỳ", "bánh cuốn"])
-                is_snack_cake = any(k in name_vi for k in ["bánh nếp", "bánh trôi", "bánh chay", "bánh tẻ", "bánh gio", "bánh cốm", "bánh rán", "bánh đa nem", "bánh quẩy", "bánh mì, vuông, ngọt"])
+            if not breakfast_candidates:
+                breakfast_candidates = [fid for fid in domain_context["fallback_carbs"] if is_available_today(fid)]
+            if not lunch_candidates:
+                lunch_candidates = [fid for fid in domain_context["fallback_proteins"] if is_available_today(fid)]
+            if not dinner_candidates:
+                dinner_candidates = [fid for fid in domain_context["fallback_proteins"] if is_available_today(fid)]
 
-                if is_valid_vietnamese_breakfast and not is_snack_cake:
-                    breakfast_foods.append(fid)
-
-                if role == "MAIN_PROTEIN" and not is_snack_cake:
-                    lunch_foods.append(fid)
-                    dinner_foods.append(fid)
-                
-                snack_foods.append(fid)
-
-            if not breakfast_foods: 
-                breakfast_foods = [x["food_id"] for x in self.foods if food_roles_cache[int(x["food_id"])] == "STAPLE_CARB"][:30]
-            if not lunch_foods: 
-                lunch_foods = [x["food_id"] for x in self.foods if food_roles_cache[int(x["food_id"])] == "MAIN_PROTEIN"][:30]
-            if not dinner_foods: 
-                dinner_foods = [x["food_id"] for x in self.foods if food_roles_cache[int(x["food_id"])] == "MAIN_PROTEIN"][:30]
-
-            breakfast_candidates = list(set(breakfast_foods))
-            lunch_candidates = list(set(lunch_foods))
-            dinner_candidates = list(set(dinner_foods))
-
-            def sort_by_gym_priority(fid):
-                food_item = self.food_by_id[fid]
-                tags = food_item.get("tags") or set()
-                name_low = str(food_item.get("name_vi") or "").lower()
-                is_clean = "clean_protein" in tags or is_clean_protein_gym(food_item)
-                if is_clean:
-                    if any(k in name_low for k in ["ức gà", "lườn gà", "gà công nghiệp", "cá hồi", "cá ngừ", "cá quả", "cá chép", "thăn bò", "bắp bò"]):
-                        return 0
-                    return 1
-                return 2
-
-            lunch_candidates.sort(key=sort_by_gym_priority)
-            dinner_candidates.sort(key=sort_by_gym_priority)
             random.shuffle(breakfast_candidates)
 
             prob = Problem()
             prob.addVariable("breakfast", breakfast_candidates[:50])
             prob.addVariable("lunch", lunch_candidates[:150])
             if not exclude_snacks:
-                snack_candidates = list(set(snack_foods))[:50]
+                snack_candidates = snack_foods[:50]
                 prob.addVariable("snack", snack_candidates)
             prob.addVariable("dinner", dinner_candidates[:150])
 
             def check_inline_budget_and_habits(*args):
                 b, l, d = args[0], args[1], args[-1]
                 b_f, l_f, d_f = self.food_by_id[b], self.food_by_id[l], self.food_by_id[d]
-                if not constraints.check_allergies([b_f, l_f, d_f]): return False
+                if domain_context["has_allergies"] and not constraints.check_allergies([b_f, l_f, d_f]): return False
                 
                 approx_cost = b_f.get("cost_vnd_100g", 15000) + l_f.get("cost_vnd_100g", 15000) + d_f.get("cost_vnd_100g", 15000)
                 if approx_cost > constraints.budget_vnd_max: 
@@ -610,7 +716,17 @@ class MealScheduler:
             sols = prob.getSolutionIter()
             valid_scored = []
             checked_count = 0
-            MAX_CHECKED = 300
+            MAX_CHECKED = 200
+            previous_day_ids = set()
+            if scheduled_plan:
+                for prev_meal in scheduled_plan[-1].get("meals", []):
+                    previous_day_ids.update(prev_meal.get("component_food_ids", [prev_meal["food_id"]]))
+
+            basa_appearance_count = 0
+            for past_day in scheduled_plan:
+                for past_meal in past_day.get("meals", []):
+                    if "basa" in str(past_meal.get("name") or "").lower():
+                        basa_appearance_count += 1
 
             for sol in sols:
                 if checked_count >= MAX_CHECKED: break
@@ -620,14 +736,18 @@ class MealScheduler:
                         sol, constraints, tolerance_multiplier,
                         all_carbs, all_proteins, all_fibers, all_snacks,
                         day_excluded_ids=set(used_food_ids),
-                        cached_roles=food_roles_cache
+                        cached_roles=food_roles_cache,
+                        rice_food=domain_context["rice_food"],
+                        alternative_carbs=domain_context["alternative_carbs"],
+                        clean_proteins=domain_context["clean_proteins"],
+                        clean_fibers=domain_context["clean_fibers"],
                     )
                     
                     if not constraints.check_daily_calories(day_meals, tolerance_multiplier): continue
                     if not constraints.check_daily_macros(day_meals, tolerance_multiplier): continue
                     
-                    actual_day_cost = sum(m["cost_vnd_100g"] for m in day_meals)
-                    if not constraints.check_daily_budget([m["cost_vnd_100g"] for m in day_meals], tolerance_multiplier): continue
+                    actual_day_cost = sum(m["total_cost_vnd"] for m in day_meals)
+                    if not constraints.check_daily_budget([m["total_cost_vnd"] for m in day_meals], tolerance_multiplier): continue
 
                     base_score = score_meal_plan([{"meals": day_meals}], self.user.get("maximize_nutrients"), self.user.get("minimize_nutrients"))
                     penalty = 0.0
@@ -644,7 +764,7 @@ class MealScheduler:
                     for m in day_meals:
                         for comp_fid in m.get("component_food_ids", []):
                             f_comp = self.food_by_id[comp_fid]
-                            f_name = str(f_comp.get("name_vi") or "").lower()
+                            f_name = food_name_low.get(comp_fid, "")
                             
                             # Thưởng đạm thông thường (Trừ gốc cá ra để chấm điểm độc lập phía dưới)
                             if any(k in f_name for k in ["bò", "gà tây", "tôm", "cua", "mực", "hàu", "sò", "hải sản"]):
@@ -669,7 +789,7 @@ class MealScheduler:
                         
                         for comp_fid in m.get("component_food_ids", []):
                             f_comp = self.food_by_id[comp_fid]
-                            f_name = str(f_comp.get("name_vi") or "").lower()
+                            f_name = food_name_low.get(comp_fid, "")
                             if "clean_protein" in (f_comp.get("tags") or set()) and any(k in f_name for k in ["ức gà", "lườn gà", "gà công nghiệp"]):
                                 has_clean_chicken = True
                     
@@ -703,24 +823,17 @@ class MealScheduler:
                     for m in day_meals: cand_ids.extend(m.get("component_food_ids", [m["food_id"]]))
 
                     for fid in cand_ids:
-                        f = self.food_by_id[fid]
-                        name_low = str(f.get("name_vi") or "").lower()
+                        name_low = food_name_low.get(fid, "")
                         if any(k in name_low for k in ["cơm tẻ", "cơm trắng", "cơm chín"]): continue
 
                         count = global_counts[fid]
                         if count == 1: penalty += 40.0
                         elif count >= 2: penalty += 200.0
 
-                        if day >= 1 and fid in [x for m in scheduled_plan[-1]["meals"] for x in m.get("component_food_ids", [m["food_id"]])]:
+                        if fid in previous_day_ids:
                             penalty += 200.0
 
                         # Bộ lọc phạt lặp chuỗi "basa"
-                        all_historical_names = []
-                        for past_day in scheduled_plan:
-                            for past_meal in past_day.get("meals", []):
-                                all_historical_names.append(past_meal.get("name", "").lower())
-                                
-                        basa_appearance_count = sum(1 for name in all_historical_names if "basa" in name)
                         if "basa" in name_low:
                             if basa_appearance_count >= 1:
                                 penalty += 600.0 * basa_appearance_count
@@ -741,9 +854,13 @@ class MealScheduler:
                             sol, constraints, tolerance_multiplier, 
                             all_carbs, all_proteins, all_fibers, all_snacks, 
                             day_excluded_ids=set(used_food_ids), # <--- KHÓA CHẶT TRÙNG LẶP KHI HẠ CHUẨN
-                            cached_roles=food_roles_cache
+                            cached_roles=food_roles_cache,
+                            rice_food=domain_context["rice_food"],
+                            alternative_carbs=domain_context["alternative_carbs"],
+                            clean_proteins=domain_context["clean_proteins"],
+                            clean_fibers=domain_context["clean_fibers"],
                         )
-                        costs = [m["cost_vnd_100g"] for m in day_meals]
+                        costs = [m["total_cost_vnd"] for m in day_meals]
                         
                         if sum(costs) <= constraints.budget_vnd_max and constraints.check_daily_calories(day_meals, tolerance_multiplier * 1.3):
                             total_p = sum(m["protein"] for m in day_meals)

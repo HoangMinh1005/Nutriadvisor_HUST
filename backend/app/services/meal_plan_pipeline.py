@@ -52,11 +52,9 @@ class MealPlanPipeline:
         if not self._fitted:
             self.initialize()
 
-        # NÂNG CẤP CHÍ MẠNG: Tăng kích thước không gian ứng viên từ n=120 lên n=400.
-        # Ràng buộc cắt nhánh sớm (inline constraints) trong scheduler.py mới chạy rất nhanh, 
-        # nên việc nâng n lên 400 sẽ đảm bảo cung cấp đủ pool Cơm, Bún, Thịt nạc, Rau xanh chuẩn 
-        # cho CSP phối hợp mà không gây treo hay chậm hệ thống.
-        candidate_ids = self.knn.recommend_for_profile(user_profile, n=400)
+        # Keep the candidate pool broad enough for meal variety, but bounded so
+        # the CSP solver does not spend time exploring low-value branches.
+        candidate_ids = self.knn.recommend_for_profile(user_profile, n=260)
 
         # 2. Retrieve details for candidate foods from PostgreSQL
         candidate_foods = self.feature_store.get_food_details(candidate_ids)

@@ -24,9 +24,9 @@ def main():
     # Đồng bộ hóa: 1800 kcal, Tỷ lệ vàng Gymer: Protein 40% - Fat 20% - Carbs 40%
     # Ngân sách trần 200k/ngày, không bữa phụ, dị ứng hải sản
     user_profile = {
-        "daily_calorie_target": 2000,
+        "daily_calorie_target": 3000,
         "macro_ratios": {"protein": 0.30, "fat": 0.30, "carbs": 0.40},  # <-- Đã nâng Protein lên 40%, hạ Carbs xuống 40%
-        "budget_vnd_max": 400000,
+        "budget_vnd_max": 200000,
         "exclude_snacks": True,
         "allergies": [],
         "goal": "gym",  # <-- Kích hoạt flag self.is_gym trong lõi scheduler.py
@@ -71,7 +71,7 @@ def main():
             meal_type = meal["meal_type"].upper()
             name = meal["name"]
             cal = meal["calories"]
-            cost = meal["cost_vnd_100g"] 
+            cost = meal["total_cost_vnd"] 
             
             day_cal += cal
             day_cost += cost

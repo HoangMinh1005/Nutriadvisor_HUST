@@ -21,7 +21,7 @@ def score_meal_plan(
         meals = day_plan.get("meals", [])
         for meal in meals:
             # Check cost minimization
-            cost = float(meal.get("cost_vnd_100g") or meal.get("price_100g") or 0.0)
+            cost = float(meal.get("total_cost_vnd") or meal.get("cost_vnd_100g") or meal.get("price_100g") or 0.0)
             if "cost_vnd" in min_nutrients or "cost" in min_nutrients:
                 # Deduct points for higher costs
                 score -= cost * 0.001

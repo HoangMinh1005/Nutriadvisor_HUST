@@ -69,6 +69,7 @@ class HealthForecaster:
         ]
 
         # Call prediction model for Weeks 1 to 4
+        previous_weight_kg = weight_kg
         for week in range(1, 5):
             input_dict = {
                 "Daily Calories Consumed": calories,
@@ -91,7 +92,22 @@ class HealthForecaster:
 
             # Convert change to kg and calculate cumulative weight & BMI
             predicted_change_kg = predicted_change_lbs / 2.20462
+
+            # Keep the displayed trajectory consistent with the user's calorie balance.
+            # The RF model can occasionally return an opposite-signed change for sparse
+            # combinations; in that case use a standard energy-balance estimate.
+            energy_balance_change_kg = (surplus * 7.0 * float(week)) / 7700.0
+            if surplus < -50.0 and predicted_change_kg > 0.0:
+                predicted_change_kg = energy_balance_change_kg
+            elif surplus > 50.0 and predicted_change_kg < 0.0:
+                predicted_change_kg = energy_balance_change_kg
+
             predicted_weight_kg = weight_kg + predicted_change_kg
+            if surplus < -50.0:
+                predicted_weight_kg = min(predicted_weight_kg, previous_weight_kg)
+            elif surplus > 50.0:
+                predicted_weight_kg = max(predicted_weight_kg, previous_weight_kg)
+            previous_weight_kg = predicted_weight_kg
             predicted_bmi = predicted_weight_kg / (height_m ** 2)
 
             forecast_chart_data.append({
@@ -121,6 +137,7 @@ class HealthForecaster:
             "status": "success",
             "current_weight": round(weight_kg, 2),
             "weight_unit": "kg",
+            "daily_caloric_surplus": round(surplus, 2),
             "forecast_chart_data": forecast_chart_data,
             "feature_importance": feature_importance
         }

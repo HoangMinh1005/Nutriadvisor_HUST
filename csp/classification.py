@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Dict, Set
+from typing import Any, Dict, Iterable, Set
 
 
 def _normalize_for_matching(text: str) -> str:
@@ -147,6 +147,59 @@ def get_dynamic_tags(food: Dict[str, Any]) -> Set[str]:
         tags.add("is_main_dish")
 
     return tags
+
+
+def violates_dietary_restrictions(food: Dict[str, Any], restrictions: Iterable[str] | None) -> bool:
+    """Return True when a food conflicts with coarse dietary restrictions."""
+    restriction_set = {str(r).strip().lower() for r in (restrictions or []) if str(r).strip()}
+    if not restriction_set:
+        return False
+
+    name_vi = _normalize_for_matching(str(food.get("name_vi") or ""))
+    name_en = _normalize_for_matching(str(food.get("canonical_name_en") or food.get("name_en") or ""))
+    category = _normalize_for_matching(str(food.get("category") or ""))
+    haystack = f" {name_vi} {name_en} {category} "
+
+    tags = food.get("tags") or set()
+    if isinstance(tags, list):
+        tags = set(tags)
+    if not tags:
+        tags = get_dynamic_tags(food)
+        food["tags"] = tags
+
+    meat_or_seafood_tags = {
+        "allergen_seafood",
+        "allergen_beef",
+        "allergen_pork",
+        "allergen_chicken",
+        "allergen_duck",
+    }
+    animal_product_tags = meat_or_seafood_tags | {"allergen_egg", "allergen_milk"}
+
+    meat_or_seafood_keywords = [
+        "thit", "thịt", "bo", "bò", "heo", "lợn", "lon", "pork", "beef",
+        "ga", "gà", "chicken", "vit", "vịt", "duck", "ca", "cá", "fish",
+        "tom", "tôm", "shrimp", "cua", "crab", "muc", "mực", "hai san",
+        "hải sản", "salmon", "tuna", "bacon", "xuc xich", "xúc xích",
+        "lap xuong", "lạp xưởng",
+    ]
+    animal_product_keywords = meat_or_seafood_keywords + [
+        "trung", "trứng", "egg", "sua", "sữa", "milk", "cheese", "pho mai",
+        "phô mai", "yogurt", "sua chua", "sữa chua", "whey", "butter",
+    ]
+
+    if "vegan" in restriction_set:
+        return bool(animal_product_tags.intersection(tags)) or any(f" {kw} " in haystack for kw in animal_product_keywords)
+
+    if "vegetarian" in restriction_set:
+        return bool(meat_or_seafood_tags.intersection(tags)) or any(f" {kw} " in haystack for kw in meat_or_seafood_keywords)
+
+    if "halal" in restriction_set:
+        pork_keywords = ["heo", "lợn", "lon", "pork", "bacon", "xuc xich", "xúc xích", "lap xuong", "lạp xưởng"]
+        alcohol_keywords = ["ruou", "rượu", "bia", "beer", "wine", "vodka", "cognac", "cocktail", "con", "cồn"]
+        return "allergen_pork" in tags or any(f" {kw} " in haystack for kw in pork_keywords + alcohol_keywords)
+
+    return False
 
 
 def check_category(cat: str, target: str) -> bool:

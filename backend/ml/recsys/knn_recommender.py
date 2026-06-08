@@ -115,21 +115,30 @@ class KNNFoodRecommender:
 
         sorted_indices = np.argsort(distances)
 
-        # 3. Filter allergies
+        # 3. Filter allergies and dietary restrictions
         from csp.constraints import NutrientConstraints
+        from csp.classification import violates_dietary_restrictions
         constraints = NutrientConstraints(
             daily_calorie_target=daily_cal,
             macro_ratios=ratios,
             allergies=user_profile.get("allergies"),
         )
+        dietary_restrictions = user_profile.get("dietary_restrictions") or []
 
-        filtered_indices = []
-        for idx in sorted_indices:
-            food = self.food_metadata[idx]
-            if "tags" not in food:
-                from csp.scheduler import get_dynamic_tags
-                food["tags"] = get_dynamic_tags(food)
-            if constraints.check_allergies([food]):
+        has_allergies = bool(user_profile.get("allergies"))
+        if not has_allergies and not dietary_restrictions:
+            filtered_indices = sorted_indices.tolist()
+        else:
+            filtered_indices = []
+            for idx in sorted_indices:
+                food = self.food_metadata[idx]
+                if "tags" not in food:
+                    from csp.scheduler import get_dynamic_tags
+                    food["tags"] = get_dynamic_tags(food)
+                if has_allergies and not constraints.check_allergies([food]):
+                    continue
+                if dietary_restrictions and violates_dietary_restrictions(food, dietary_restrictions):
+                    continue
                 filtered_indices.append(idx)
 
         # 4. Stratified selection
@@ -278,6 +287,11 @@ class KNNFoodRecommender:
                 "canonical_key": food.get("canonical_key", ""),
                 "name_en": food.get("canonical_name_en", ""),
                 "name_vi": food.get("name_vi", ""),
+                "calories": float(food.get("calories") or food.get("energy_kcal") or 0.0),
+                "protein": float(food.get("protein") or food.get("protein_g") or 0.0),
+                "fat": float(food.get("fat") or food.get("fat_g") or 0.0),
+                "carbs": float(food.get("carbs") or food.get("carbs_g") or 0.0),
+                "cost_vnd_100g": float(food.get("cost_vnd_100g") or food.get("price_100g") or 0.0),
                 "match_score": float(1.0 - distances[idx]),
             })
 
@@ -390,6 +404,11 @@ class KNNFoodRecommender:
                 "canonical_key": food.get("canonical_key", ""),
                 "name_en": food.get("canonical_name_en", ""),
                 "name_vi": food.get("name_vi", ""),
+                "calories": float(food.get("calories") or food.get("energy_kcal") or 0.0),
+                "protein": float(food.get("protein") or food.get("protein_g") or 0.0),
+                "fat": float(food.get("fat") or food.get("fat_g") or 0.0),
+                "carbs": float(food.get("carbs") or food.get("carbs_g") or 0.0),
+                "cost_vnd_100g": float(food.get("cost_vnd_100g") or food.get("price_100g") or 0.0),
                 "match_score": float(1.0 - distances[idx]),
             })
 

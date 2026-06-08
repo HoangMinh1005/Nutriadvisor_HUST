@@ -456,6 +456,10 @@ header#main-header {
     margin-bottom: 24px;
 }
 
+.form-group-wide {
+    grid-column: 1 / -1;
+}
+
 .form-grid .form-group input, .form-grid .form-group select, .modal-card select, .modal-card input {
     background-color: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border-color);
@@ -643,6 +647,18 @@ header#main-header {
     margin-left: 2px;
 }
 
+.metric-subline,
+.form-hint {
+    font-size: 11px;
+    font-weight: 500;
+    color: hsl(218, 12%, 58%);
+}
+
+.form-hint {
+    display: block;
+    margin-top: 6px;
+}
+
 .metric-bmi-badge {
     display: flex;
     align-items: center;
@@ -666,6 +682,37 @@ header#main-header {
 /* 3.2 Weekly Schedule Card */
 .weekly-schedule-card {
     padding: 20px;
+    position: relative;
+}
+
+.chart-card {
+    position: relative;
+}
+
+.panel-loading-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    border-radius: inherit;
+    background-color: rgba(9, 13, 22, 0.72);
+    backdrop-filter: blur(7px);
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.panel-loading-overlay.hidden {
+    display: none;
+}
+
+.panel-loading-overlay i {
+    color: var(--color-primary);
+    font-size: 24px;
 }
 
 .schedule-header {
@@ -772,12 +819,109 @@ header#main-header {
     gap: 12px;
 }
 
+.day-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-bottom: 4px;
+}
+
+.day-summary-item {
+    border: 1px solid var(--border-color);
+    background-color: rgba(255, 255, 255, 0.025);
+    border-radius: 8px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.day-summary-item span {
+    font-size: 10px;
+    font-weight: 600;
+    color: hsl(218, 12%, 55%);
+    text-transform: uppercase;
+}
+
+.day-summary-item strong {
+    font-family: var(--font-heading);
+    font-size: 14px;
+    color: #ffffff;
+}
+
+.meal-slot-group {
+    border: 1px solid var(--border-color);
+    border-left-width: 4px;
+    border-radius: 12px;
+    padding: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.slot-group-breakfast {
+    border-left-color: var(--color-info);
+    background-color: rgba(6, 182, 212, 0.035);
+}
+
+.slot-group-lunch {
+    border-left-color: var(--color-warning);
+    background-color: rgba(249, 115, 22, 0.035);
+}
+
+.slot-group-dinner {
+    border-left-color: var(--color-success);
+    background-color: rgba(16, 185, 129, 0.035);
+}
+
+.slot-group-snack {
+    border-left-color: hsl(218, 12%, 55%);
+    background-color: rgba(255, 255, 255, 0.025);
+}
+
+.meal-slot-group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.meal-slot-group-header > div:first-child {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.meal-slot-group-header strong {
+    font-size: 12px;
+    color: hsl(218, 12%, 68%);
+}
+
+.meal-slot-group-total {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+}
+
+.meal-slot-group-total span {
+    font-size: 11px;
+    font-weight: 700;
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.045);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    padding: 4px 8px;
+}
+
 .meal-row-wrapper {
     display: flex;
     flex-direction: column;
     border: 1px solid var(--border-color);
-    background-color: rgba(255, 255, 255, 0.01);
-    border-radius: 10px;
+    background-color: rgba(11, 17, 28, 0.55);
+    border-radius: 8px;
     overflow: hidden;
     transition: var(--transition-smooth);
 }
@@ -822,12 +966,29 @@ header#main-header {
 .meal-stats {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
 }
 
-.meal-macros {
+.meal-macro-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(58px, 1fr));
+    gap: 6px;
+    min-width: 220px;
+}
+
+.meal-macro-grid span {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
     font-size: 11px;
-    color: hsl(218, 12%, 55%);
+    color: hsl(218, 12%, 76%);
+}
+
+.meal-macro-grid b {
+    font-size: 9px;
+    color: hsl(218, 12%, 50%);
+    text-transform: uppercase;
+    font-weight: 600;
 }
 
 .meal-calories {
@@ -838,6 +999,17 @@ header#main-header {
     background-color: rgba(255, 255, 255, 0.04);
     padding: 4px 10px;
     border-radius: 6px;
+    white-space: nowrap;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    line-height: 1.15;
+}
+
+.meal-calories small {
+    font-size: 9px;
+    color: hsl(218, 12%, 58%);
+    font-weight: 500;
 }
 
 .meal-expand-arrow {
@@ -1352,5 +1524,28 @@ header#main-header {
     }
     .form-grid {
         grid-template-columns: 1fr;
+    }
+    .day-summary {
+        grid-template-columns: 1fr;
+    }
+    .meal-main-row {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 10px;
+    }
+    .meal-stats {
+        width: 100%;
+        justify-content: space-between;
+    }
+    .meal-slot-group-header {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+    .meal-slot-group-total {
+        justify-content: flex-start;
+    }
+    .meal-macro-grid {
+        min-width: 0;
+        flex: 1;
     }
 }

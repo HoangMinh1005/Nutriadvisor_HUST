@@ -80,6 +80,23 @@ def calculate_tdee(weight_kg: float, height_cm: float, age: int, gender: str, ac
     return bmr * multiplier
 
 
+def attach_energy_balance_fields(profile: Dict[str, Any], age: int) -> Dict[str, Any]:
+    weight_kg = float(profile["weight_kg"])
+    height_cm = float(profile["height_cm"])
+    activity = profile.get("physical_activity_level") or "Moderately Active"
+    daily_cal = float(profile.get("daily_calorie_target") or 0.0)
+    maintenance_calories = calculate_tdee(
+        weight_kg=weight_kg,
+        height_cm=height_cm,
+        age=age,
+        gender=profile.get("gender") or "male",
+        activity_level=activity,
+    )
+    profile["maintenance_calories"] = round(maintenance_calories)
+    profile["daily_caloric_surplus"] = round(daily_cal - maintenance_calories)
+    return profile
+
+
 class ForecastRequest(BaseModel):
     current_weight_kg: float = Field(..., ge=30, le=250, description="Current weight of the user in kg")
     height_cm: float = Field(..., ge=100, le=250, description="Height of the user in cm")
@@ -104,6 +121,122 @@ def _get_database_url() -> str:
     if not db_url:
         raise RuntimeError("DATABASE_URL is not configured")
     return db_url
+
+
+def _as_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _component_total_cost_vnd(component: Dict[str, Any]) -> float:
+    if component.get("total_cost_vnd") is not None:
+        return _as_float(component.get("total_cost_vnd"))
+    price_100g = _as_float(component.get("cost_vnd_100g"))
+    weight_g = _as_float(component.get("weight"), 100.0)
+    return price_100g * weight_g / 100.0
+
+
+def _meal_total_cost_vnd(meal: Dict[str, Any]) -> float:
+    if meal.get("total_cost_vnd") is not None:
+        return _as_float(meal.get("total_cost_vnd"))
+    components = meal.get("components") or []
+    if components:
+        return sum(_component_total_cost_vnd(c) for c in components if isinstance(c, dict))
+    return _as_float(meal.get("cost_vnd_100g") or meal.get("price_100g_vnd"))
+
+
+def _aggregate_components(components: List[Dict[str, Any]]) -> Dict[str, float]:
+    valid_components = [c for c in components if isinstance(c, dict)]
+    return {
+        "calories": sum(_as_float(c.get("calories")) for c in valid_components),
+        "protein": sum(_as_float(c.get("protein")) for c in valid_components),
+        "fat": sum(_as_float(c.get("fat")) for c in valid_components),
+        "carbs": sum(_as_float(c.get("carbs")) for c in valid_components),
+        "total_cost_vnd": sum(_component_total_cost_vnd(c) for c in valid_components),
+    }
+
+
+def _build_meal_from_row(row: Dict[str, Any]) -> Dict[str, Any]:
+    import json
+
+    comps = []
+    if row.get("notes"):
+        try:
+            comps = json.loads(row["notes"])
+        except Exception:
+            comps = []
+    if not comps:
+        comps = [{
+            "food_id": int(row["food_id"]),
+            "name": row["name_vi"],
+            "weight": 100.0,
+            "calories": float(row["energy_kcal"]),
+            "protein": float(row["protein_g"]),
+            "fat": float(row["fat_g"]),
+            "carbs": float(row["carbs_g"]),
+            "cost_vnd_100g": float(row["price_100g_vnd"])
+        }]
+    meal_totals = _aggregate_components(comps)
+    meal_name = " + ".join(
+        f"{c.get('name', row['name_vi'])} ({int(_as_float(c.get('weight'), 100.0))}g)"
+        for c in comps
+        if isinstance(c, dict)
+    ) or row["name_vi"]
+    return {
+        "meal_type": row["meal_slot_code"],
+        "food_id": row["food_id"],
+        "name": meal_name,
+        "calories": meal_totals["calories"],
+        "protein": meal_totals["protein"],
+        "fat": meal_totals["fat"],
+        "carbs": meal_totals["carbs"],
+        "total_cost_vnd": meal_totals["total_cost_vnd"],
+        "components": comps
+    }
+
+
+def _load_user_meal_plan(user_id: int) -> List[Dict[str, Any]]:
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+
+    with psycopg2.connect(_get_database_url()) as conn:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                SELECT mp.plan_date::text as plan_date, mp.meal_slot_code, mp.food_id, mp.notes,
+                       f.name_vi, g.group_code as category, n.energy_kcal, n.protein_g, n.fat_g, n.carbs_g,
+                       COALESCE(f.price_100g_vnd, 15000) as price_100g_vnd
+                FROM meal_plans mp
+                JOIN foods f ON mp.food_id = f.food_id
+                JOIN food_groups g ON f.food_group_id = g.food_group_id
+                JOIN food_nutrients n ON f.food_id = n.food_id
+                WHERE mp.user_id = %s
+                ORDER BY
+                    mp.plan_date,
+                    CASE mp.meal_slot_code
+                        WHEN 'breakfast' THEN 1
+                        WHEN 'lunch' THEN 2
+                        WHEN 'snack' THEN 3
+                        WHEN 'dinner' THEN 4
+                        ELSE 99
+                    END;
+            """, [user_id])
+            rows = cur.fetchall()
+
+    meal_plan = []
+    if rows:
+        dates = sorted(list(set(r["plan_date"] for r in rows)))
+        days_of_week = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
+        for idx, d_str in enumerate(dates):
+            day_meals = [_build_meal_from_row(r) for r in rows if r["plan_date"] == d_str]
+            meal_plan.append({
+                "day": idx + 1,
+                "day_name": days_of_week[idx % 7],
+                "date": d_str,
+                "meals": day_meals
+            })
+    return meal_plan
 
 
 # Verify database on startup
@@ -148,7 +281,6 @@ def get_health_forecast(req: ForecastRequest) -> Dict[str, Any]:
 
 class LoginRequest(BaseModel):
     email: str
-    password: str = None
 
 
 class ProfileRequest(BaseModel):
@@ -173,6 +305,10 @@ class SwapRequest(BaseModel):
     meal_slot_code: str
     original_food_id: int
     replacement_food_id: int
+
+
+class RegenerateMealPlanRequest(BaseModel):
+    email: str
 
 
 class ChatRequest(BaseModel):
@@ -237,7 +373,7 @@ def handle_chat(req: ChatRequest) -> Dict[str, Any]:
             # Extract the meals from Day 1 to serve as the single meal/day recommendation
             suggested_meals = plan["meal_plan"][0]["meals"]
             total_cal = sum(m.get("calories", 0.0) for m in suggested_meals)
-            total_cost = sum(m.get("cost_vnd_100g", 0.0) for m in suggested_meals)
+            total_cost = sum(_meal_total_cost_vnd(m) for m in suggested_meals)
             
             return {
                 "status": "success",
@@ -369,6 +505,7 @@ def handle_login(req: LoginRequest) -> Dict[str, Any]:
                 for key in ["height_cm", "weight_kg", "bmi"]:
                     if profile[key] is not None:
                         profile[key] = float(profile[key])
+                attach_energy_balance_fields(profile, age)
                 
                 # 2. Fetch active 7-day meal plan
                 cur.execute("""
@@ -380,7 +517,15 @@ def handle_login(req: LoginRequest) -> Dict[str, Any]:
                     JOIN food_groups g ON f.food_group_id = g.food_group_id
                     JOIN food_nutrients n ON f.food_id = n.food_id
                     WHERE mp.user_id = %s
-                    ORDER BY mp.plan_date, mp.meal_slot_code;
+                    ORDER BY
+                        mp.plan_date,
+                        CASE mp.meal_slot_code
+                            WHEN 'breakfast' THEN 1
+                            WHEN 'lunch' THEN 2
+                            WHEN 'snack' THEN 3
+                            WHEN 'dinner' THEN 4
+                            ELSE 99
+                        END;
                 """, [profile["user_id"]])
                 rows = cur.fetchall()
                 
@@ -411,15 +556,21 @@ def handle_login(req: LoginRequest) -> Dict[str, Any]:
                                         "carbs": float(r["carbs_g"]),
                                         "cost_vnd_100g": float(r["price_100g_vnd"])
                                     }]
+                                meal_totals = _aggregate_components(comps)
+                                meal_name = " + ".join(
+                                    f"{c.get('name', r['name_vi'])} ({int(_as_float(c.get('weight'), 100.0))}g)"
+                                    for c in comps
+                                    if isinstance(c, dict)
+                                ) or r["name_vi"]
                                 day_meals.append({
                                     "meal_type": r["meal_slot_code"],
                                     "food_id": r["food_id"],
-                                    "name": r["name_vi"],
-                                    "calories": float(r["energy_kcal"]),
-                                    "protein": float(r["protein_g"]),
-                                    "fat": float(r["fat_g"]),
-                                    "carbs": float(r["carbs_g"]),
-                                    "cost_vnd_100g": float(r["price_100g_vnd"]),
+                                    "name": meal_name,
+                                    "calories": meal_totals["calories"],
+                                    "protein": meal_totals["protein"],
+                                    "fat": meal_totals["fat"],
+                                    "carbs": meal_totals["carbs"],
+                                    "total_cost_vnd": meal_totals["total_cost_vnd"],
                                     "components": comps
                                 })
                         meal_plan.append({
@@ -502,6 +653,13 @@ def handle_save_profile(req: ProfileRequest) -> Dict[str, Any]:
         with psycopg2.connect(_get_database_url()) as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
+                    SELECT daily_calorie_target, budget_vnd_max, physical_activity_level, allergies, weight_goal
+                    FROM user_profiles
+                    WHERE email = %s;
+                """, [email])
+                existing_profile = cur.fetchone()
+
+                cur.execute("""
                     INSERT INTO user_profiles (
                         full_name, email, gender, birth_year, height_cm, weight_kg, 
                         daily_calorie_target, weight_goal, budget_vnd_max, 
@@ -541,104 +699,18 @@ def handle_save_profile(req: ProfileRequest) -> Dict[str, Any]:
                 for key in ["height_cm", "weight_kg", "bmi"]:
                     if profile_data[key] is not None:
                         profile_data[key] = float(profile_data[key])
-                        
-        if not meal_pipeline:
-            raise HTTPException(status_code=503, detail="Meal recommendation service is unavailable.")
-            
-        # 1. Map weight_goal to health_goal for user segmentation
-        goal_raw = str(weight_goal).lower()
-        if "lose" in goal_raw or "loss" in goal_raw:
-            health_goal = "weight_loss"
-        elif "gain" in goal_raw or "muscle" in goal_raw:
-            health_goal = "muscle_gain"
-        else:
-            health_goal = "maintenance"
-
-        # 2. Predict segment using KMeans
-        segment_name = "balanced_lifestyle"
-        if segmentation:
-            try:
-                user_p = UserProfile(
-                    user_id=user_id,
-                    age=age,
-                    weight_kg=float(weight_kg),
-                    height_cm=float(height_cm),
-                    daily_calorie_target=int(daily_calorie_target),
-                    health_goal=health_goal,
-                    allergies=allergies
-                )
-                assignment = segmentation.predict(user_p)
-                segment_name = assignment.segment_name
-            except Exception as e:
-                print(f"Error predicting user segment: {e}")
-
-        # 3. Override macro ratio for athletic/active users
-        if physical_activity_level == "Very Active" or "gym" in full_name.lower():
-            segment_name = "performance_athlete"
-
-        template = MENU_TEMPLATES.get(segment_name, MENU_TEMPLATES["balanced_lifestyle"])
-        
-        csp_profile = {
-            "daily_calorie_target": float(daily_calorie_target),
-            "budget_vnd_max": float(budget_vnd_max),
-            "macro_ratios": {
-                "protein": template["protein_target_ratio"],
-                "fat": template["fat_target_ratio"],
-                "carbs": template["carbs_target_ratio"]
-            },
-            "exclude_snacks": True,
-            "allergies": allergies
-        }
-            
-        plan_res = meal_pipeline.generate_meal_plan(csp_profile)
-        
-        meal_plan = []
-        if plan_res.get("feasible") and plan_res.get("meal_plan"):
-            with psycopg2.connect(_get_database_url()) as conn:
-                with conn.cursor() as cur:
-                    cur.execute("DELETE FROM meal_plans WHERE user_id = %s;", [user_id])
-                    
-                    days_of_week = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy", "Chủ Nhật"]
-                    for idx, day_data in enumerate(plan_res["meal_plan"]):
-                        day_num = day_data["day"]
-                        day_name = days_of_week[idx % 7]
-                        plan_date = datetime.date.today() + datetime.timedelta(days=idx)
-                        
-                        day_meals = []
-                        for m in day_data["meals"]:
-                            meal_type = m["meal_type"]
-                            food_id = m["food_id"]
-                            
-                            import json
-                            notes_data = json.dumps(m.get("components", []))
-                            
-                            cur.execute("""
-                                INSERT INTO meal_plans (user_id, food_id, plan_date, meal_slot_code, portion_multiplier, generated_by, notes)
-                                VALUES (%s, %s, %s, %s, 1.00, 'csp', %s)
-                                ON CONFLICT (user_id, plan_date, meal_slot_code) DO UPDATE SET
-                                    food_id = EXCLUDED.food_id,
-                                    generated_by = EXCLUDED.generated_by,
-                                    notes = EXCLUDED.notes;
-                            """, [user_id, food_id, plan_date, meal_type, notes_data])
-                            
-                            day_meals.append({
-                                "meal_type": meal_type,
-                                "food_id": food_id,
-                                "name": m["name"],
-                                "calories": float(m["calories"]),
-                                "protein": float(m["protein"]),
-                                "fat": float(m["fat"]),
-                                "carbs": float(m["carbs"]),
-                                "cost_vnd_100g": float(m["cost_vnd_100g"]),
-                                "components": m.get("components", [])
-                            })
-                        meal_plan.append({
-                            "day": day_num,
-                            "day_name": day_name,
-                            "date": str(plan_date),
-                            "meals": day_meals
-                        })
-                    conn.commit()
+                attach_energy_balance_fields(profile_data, age)
+        meal_plan = _load_user_meal_plan(user_id)
+        meal_fields_changed = True
+        if existing_profile:
+            meal_fields_changed = (
+                int(existing_profile.get("daily_calorie_target") or 0) != int(daily_calorie_target)
+                or int(existing_profile.get("budget_vnd_max") or 0) != int(budget_vnd_max)
+                or str(existing_profile.get("physical_activity_level") or "") != physical_activity_level
+                or str(existing_profile.get("weight_goal") or "") != weight_goal
+                or sorted(existing_profile.get("allergies") or []) != sorted(allergies or [])
+            )
+        meal_plan_stale = meal_fields_changed or not meal_plan
         
         tdee = calculate_tdee(
             weight_kg=float(weight_kg),
@@ -672,8 +744,114 @@ def handle_save_profile(req: ProfileRequest) -> Dict[str, Any]:
             "status": "success",
             "profile": profile_data,
             "meal_plan": meal_plan,
-            "forecast": forecast_data
+            "forecast": forecast_data,
+            "meal_plan_stale": meal_plan_stale
         }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+
+@app.post("/api/v1/meal-plan/regenerate")
+def regenerate_meal_plan(req: RegenerateMealPlanRequest) -> Dict[str, Any]:
+    if not meal_pipeline:
+        raise HTTPException(status_code=503, detail="Meal recommendation service is unavailable.")
+
+    try:
+        import datetime
+        import json
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+
+        email = req.email.strip().lower()
+        with psycopg2.connect(_get_database_url()) as conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                cur.execute("""
+                    SELECT user_id, full_name, gender, birth_year, height_cm, weight_kg,
+                           allergies, weight_goal, daily_calorie_target, budget_vnd_max,
+                           physical_activity_level
+                    FROM user_profiles
+                    WHERE email = %s;
+                """, [email])
+                profile = cur.fetchone()
+        if not profile:
+            raise HTTPException(status_code=404, detail="User not found")
+
+        current_year = datetime.datetime.now().year
+        age = current_year - profile["birth_year"] if profile["birth_year"] else 20
+        goal_raw = str(profile["weight_goal"] or "maintain").lower()
+        if "lose" in goal_raw or "loss" in goal_raw:
+            health_goal = "weight_loss"
+        elif "gain" in goal_raw or "muscle" in goal_raw:
+            health_goal = "muscle_gain"
+        else:
+            health_goal = "maintenance"
+
+        segment_name = "balanced_lifestyle"
+        if segmentation:
+            try:
+                user_p = UserProfile(
+                    user_id=profile["user_id"],
+                    age=age,
+                    weight_kg=float(profile["weight_kg"]),
+                    height_cm=float(profile["height_cm"]),
+                    daily_calorie_target=int(profile["daily_calorie_target"]),
+                    health_goal=health_goal,
+                    allergies=profile["allergies"] or []
+                )
+                assignment = segmentation.predict(user_p)
+                segment_name = assignment.segment_name
+            except Exception as e:
+                print(f"Error predicting user segment: {e}")
+
+        if profile["physical_activity_level"] == "Very Active" or "gym" in str(profile["full_name"] or "").lower():
+            segment_name = "performance_athlete"
+
+        template = MENU_TEMPLATES.get(segment_name, MENU_TEMPLATES["balanced_lifestyle"])
+        csp_profile = {
+            "daily_calorie_target": float(profile["daily_calorie_target"]),
+            "budget_vnd_max": float(profile["budget_vnd_max"]),
+            "macro_ratios": {
+                "protein": template["protein_target_ratio"],
+                "fat": template["fat_target_ratio"],
+                "carbs": template["carbs_target_ratio"]
+            },
+            "exclude_snacks": True,
+            "allergies": profile["allergies"] or []
+        }
+
+        plan_res = meal_pipeline.generate_meal_plan(csp_profile)
+        if not plan_res.get("feasible") or not plan_res.get("meal_plan"):
+            return {"status": "infeasible", "meal_plan": [], "meal_plan_stale": True}
+
+        with psycopg2.connect(_get_database_url()) as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM meal_plans WHERE user_id = %s;", [profile["user_id"]])
+                for idx, day_data in enumerate(plan_res["meal_plan"]):
+                    plan_date = datetime.date.today() + datetime.timedelta(days=idx)
+                    for m in day_data["meals"]:
+                        cur.execute("""
+                            INSERT INTO meal_plans (user_id, food_id, plan_date, meal_slot_code, portion_multiplier, generated_by, notes)
+                            VALUES (%s, %s, %s, %s, 1.00, 'csp', %s)
+                            ON CONFLICT (user_id, plan_date, meal_slot_code) DO UPDATE SET
+                                food_id = EXCLUDED.food_id,
+                                generated_by = EXCLUDED.generated_by,
+                                notes = EXCLUDED.notes;
+                        """, [
+                            profile["user_id"],
+                            m["food_id"],
+                            plan_date,
+                            m["meal_type"],
+                            json.dumps(m.get("components", []))
+                        ])
+                conn.commit()
+
+        return {
+            "status": "success",
+            "meal_plan": _load_user_meal_plan(profile["user_id"]),
+            "meal_plan_stale": False
+        }
+    except HTTPException:
+        raise
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
 

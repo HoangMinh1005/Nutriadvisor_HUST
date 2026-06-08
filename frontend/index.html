@@ -65,14 +65,6 @@
                     </div>
                 </div>
 
-                <div class="form-group">
-                    <label for="login-password">MẬT KHẨU</label>
-                    <div class="input-wrapper">
-                        <i class="fa-solid fa-lock"></i>
-                        <input type="password" id="login-password" required placeholder="••••••••" value="password123">
-                    </div>
-                </div>
-
                 <div class="checkbox-group">
                     <label class="checkbox-container">
                         <input type="checkbox" id="login-first-time" checked>
@@ -137,14 +129,19 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="ob-calories">Ngân sách Calo nạp hằng ngày</label>
+                        <label for="ob-calories">Calo mong muốn ăn hằng ngày</label>
                         <input type="number" id="ob-calories" required min="800" max="10000" placeholder="2200"
                             value="2200">
+                        <span class="form-hint" id="ob-maintenance-calories">Calo duy trì ước tính: -- kcal</span>
                     </div>
                     <div class="form-group">
                         <label for="ob-budget">Kinh phí ăn uống hằng ngày (VNĐ)</label>
                         <input type="number" id="ob-budget" required min="10000" max="5000000" placeholder="200000"
                             value="200000">
+                    </div>
+                    <div class="form-group form-group-wide">
+                        <label for="ob-allergies">Dị ứng thực phẩm</label>
+                        <input type="text" id="ob-allergies" placeholder="Ví dụ: hải sản, trứng, đậu phộng">
                     </div>
                 </div>
 
@@ -206,8 +203,9 @@
                 <div class="metric-card glass-card">
                     <div class="metric-icon cal-icon"><i class="fa-solid fa-fire"></i></div>
                     <div class="metric-data">
-                        <span class="metric-label">CALO HẰNG NGÀY</span>
+                        <span class="metric-label">CALO MONG MUỐN</span>
                         <h3 class="metric-value"><span id="lbl-calories">--</span> <span class="unit">kcal</span></h3>
+                        <span class="metric-subline" id="lbl-maintenance-calories">Duy trì: -- kcal</span>
                     </div>
                 </div>
                 <div class="metric-card glass-card">
@@ -221,6 +219,10 @@
 
             <!-- 3.2 Optimized CSP Weekly Schedule Card -->
             <div class="weekly-schedule-card glass-card">
+                <div class="panel-loading-overlay hidden" id="meal-plan-loading">
+                    <i class="fa-solid fa-circle-notch fa-spin"></i>
+                    <span>Đang cập nhật thực đơn CSP...</span>
+                </div>
                 <div class="schedule-header">
                     <div class="title-with-icon">
                         <i class="fa-solid fa-calendar-week"></i>
@@ -257,6 +259,10 @@
 
             <!-- 3.3 Body Forecast Line Chart -->
             <div class="chart-card glass-card">
+                <div class="panel-loading-overlay hidden" id="forecast-loading">
+                    <i class="fa-solid fa-circle-notch fa-spin"></i>
+                    <span>Đang cập nhật dự báo...</span>
+                </div>
                 <div class="chart-header">
                     <i class="fa-solid fa-chart-line"></i>
                     <div>
@@ -272,6 +278,10 @@
 
             <!-- 3.4 Feature Importance Horizontal Bar Chart -->
             <div class="chart-card glass-card">
+                <div class="panel-loading-overlay hidden" id="importance-loading">
+                    <i class="fa-solid fa-circle-notch fa-spin"></i>
+                    <span>Đang cập nhật phân tích...</span>
+                </div>
                 <div class="chart-header">
                     <i class="fa-solid fa-chart-bar"></i>
                     <div>
@@ -381,12 +391,17 @@
                         </select>
                     </div>
                     <div class="form-group">
-                        <label for="edit-calories">Ngân sách Calo hằng ngày</label>
+                        <label for="edit-calories">Calo mong muốn ăn hằng ngày</label>
                         <input type="number" id="edit-calories" required min="800" max="10000">
+                        <span class="form-hint" id="edit-maintenance-calories">Calo duy trì ước tính: -- kcal</span>
                     </div>
                     <div class="form-group">
                         <label for="edit-budget">Kinh phí hằng ngày (VNĐ)</label>
                         <input type="number" id="edit-budget" required min="10000" max="5000000">
+                    </div>
+                    <div class="form-group form-group-wide">
+                        <label for="edit-allergies">Dị ứng thực phẩm</label>
+                        <input type="text" id="edit-allergies" placeholder="Ví dụ: hải sản, trứng, đậu phộng">
                     </div>
                 </div>
 
