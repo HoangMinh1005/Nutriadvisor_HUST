@@ -1,0 +1,126 @@
+import os
+import pickle
+import pandas as pd
+from typing import Any, Dict
+
+# Resolve absolute path to models/health_predictor.pkl relative to this file
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+MODEL_PATH = os.path.join(BASE_DIR, "models", "health_predictor.pkl")
+if not os.path.exists(MODEL_PATH) and os.path.exists("/models/health_predictor.pkl"):
+    MODEL_PATH = "/models/health_predictor.pkl"
+
+class HealthForecaster:
+    """Service to run health predictions using the trained Random Forest model."""
+
+    def __init__(self, model_path: str = MODEL_PATH):
+        self.model_path = model_path
+        self.model_data = None
+        self.model = None
+        self.gender_mapping = {}
+        self.activity_mapping = {}
+        self.sleep_mapping = {}
+        self.features = []
+        self._load_model()
+
+    def _load_model(self) -> None:
+        if not os.path.exists(self.model_path):
+            raise FileNotFoundError(f"Model file not found at '{self.model_path}'. Run training first.")
+        with open(self.model_path, "rb") as f:
+            self.model_data = pickle.load(f)
+        self.model = self.model_data["model"]
+        self.features = self.model_data["features"]
+        self.gender_mapping = self.model_data["gender_mapping"]
+        self.activity_mapping = self.model_data["activity_mapping"]
+        self.sleep_mapping = self.model_data["sleep_mapping"]
+
+    def predict_weekly_trend(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate a 5-week trajectory forecast (W0 to W4) for weight and BMI."""
+        weight_kg = float(data["current_weight_kg"])
+        height_cm = float(data["height_cm"])
+        gender = data["gender"]
+        activity = data["physical_activity_level"]
+        calories = float(data["daily_calories_consumed"])
+        surplus = float(data["daily_caloric_surplus"])
+        sleep = data["sleep_quality"]
+        stress = float(data["stress_level"])
+
+        # Encode categorical inputs
+        gender_encoded = self.gender_mapping.get(gender)
+        activity_encoded = self.activity_mapping.get(activity)
+        sleep_encoded = self.sleep_mapping.get(sleep)
+
+        if gender_encoded is None:
+            raise ValueError(f"Invalid gender '{gender}'. Must be 'M' or 'F'.")
+        if activity_encoded is None:
+            raise ValueError(f"Invalid activity level '{activity}'.")
+        if sleep_encoded is None:
+            raise ValueError(f"Invalid sleep quality '{sleep}'.")
+
+        height_m = height_cm / 100.0
+        bmi_w0 = weight_kg / (height_m ** 2)
+
+        # Baseline week (timeline: "Hiện tại")
+        forecast_chart_data = [
+            {
+                "timeline": "Hiện tại",
+                "predicted_weight": round(weight_kg, 2),
+                "predicted_bmi": round(bmi_w0, 2)
+            }
+        ]
+
+        # Call prediction model for Weeks 1 to 4
+        for week in range(1, 5):
+            input_dict = {
+                "Daily Calories Consumed": calories,
+                "Daily Caloric Surplus/Deficit": surplus,
+                "Duration (weeks)": float(week),
+                "Gender_encoded": float(gender_encoded),
+                "Activity_encoded": float(activity_encoded),
+                "Sleep_encoded": float(sleep_encoded),
+                "Stress Level": float(stress)
+            }
+
+            # Align feature vector order with training features list
+            feature_vector = [input_dict[feat] for feat in self.features]
+
+            # Construct DataFrame with matching column names to suppress user warnings
+            df_features = pd.DataFrame([feature_vector], columns=self.features)
+
+            # Model predicts weight change in lbs
+            predicted_change_lbs = float(self.model.predict(df_features)[0])
+
+            # Convert change to kg and calculate cumulative weight & BMI
+            predicted_change_kg = predicted_change_lbs / 2.20462
+            predicted_weight_kg = weight_kg + predicted_change_kg
+            predicted_bmi = predicted_weight_kg / (height_m ** 2)
+
+            forecast_chart_data.append({
+                "timeline": f"Tuần {week}",
+                "predicted_weight": round(predicted_weight_kg, 2),
+                "predicted_bmi": round(predicted_bmi, 2)
+            })
+
+        # Process feature importance mapping
+        feature_importance = {}
+        if hasattr(self.model, "feature_importances_"):
+            importances = self.model.feature_importances_
+            telemetry_mapping = {
+                "Stress Level": "Stress Level",
+                "Daily Caloric Surplus/Deficit": "Caloric Surplus/Deficit",
+                "Sleep_encoded": "Sleep Quality",
+                "Activity_encoded": "Physical Activity Level",
+                "Daily Calories Consumed": "Calories Consumed",
+                "Duration (weeks)": "Duration",
+                "Gender_encoded": "Gender"
+            }
+            for feat, imp in zip(self.features, importances):
+                telemetry_key = telemetry_mapping.get(feat, feat)
+                feature_importance[telemetry_key] = round(float(imp), 4)
+
+        return {
+            "status": "success",
+            "current_weight": round(weight_kg, 2),
+            "weight_unit": "kg",
+            "forecast_chart_data": forecast_chart_data,
+            "feature_importance": feature_importance
+        }

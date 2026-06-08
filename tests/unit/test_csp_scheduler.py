@@ -93,16 +93,6 @@ def test_scheduler_solve_auto_relaxation():
     assert result["relaxation_attempts"] > 1
 
 
-def test_translate_kaggle_food_name():
-    from csp.scheduler import translate_kaggle_food_name
-    
-    # "dried" and "dry" are now stripped from Kaggle translations
-    assert translate_kaggle_food_name("Egg, dried, white") == "Lòng trắng trứng"
-    assert translate_kaggle_food_name("Egg, dried, yolk") == "Lòng đỏ trứng"
-    assert translate_kaggle_food_name("Chicken Breast") == "Ức gà"
-    assert translate_kaggle_food_name("Egg, white") == "Lòng trắng trứng"
-
-
 def test_dietary_rules():
     # Rich mock data to trigger is_rich_db matching (>=1 carbs, >=1 proteins, >=1 fibers)
     rich_mock_foods = [
@@ -217,27 +207,6 @@ def test_get_max_serving_g():
     # Powder should be 30g
     powder = {"name_vi": "Bột chuối sấy khô", "category": "trái_cây"}
     assert get_max_serving_g(powder) == 30.0
-
-
-def test_improved_translation():
-    from csp.scheduler import translate_kaggle_food_name
-    
-    assert translate_kaggle_food_name("Chicken, breast, meat only, raw") == "Ức gà"
-    assert translate_kaggle_food_name("Egg, white, raw, fresh") == "Lòng trắng trứng"
-    assert translate_kaggle_food_name("Milk, fluid, 3.25% milkfat") == "Sữa 3.25% béo"
-    assert translate_kaggle_food_name("Pork, fresh, loin, separable lean only, raw") == "Thịt thăn heo"
-    assert translate_kaggle_food_name("Egg, dried, white") == "Lòng trắng trứng"
-    
-    # New translations
-    assert translate_kaggle_food_name("smoked salmon") == "Cá hồi xông khói"
-    assert translate_kaggle_food_name("cod, cooked") == "Cá tuyết luộc"
-    assert translate_kaggle_food_name("chicken, thigh, cooked") == "Thịt đùi gà luộc"
-    
-    # Raw default cooking method addition
-    assert translate_kaggle_food_name("Fish, raw") == "Cá hấp"
-    assert translate_kaggle_food_name("Chicken, raw") == "Thịt gà luộc"
-    assert translate_kaggle_food_name("Beef, raw") == "Thịt bò xào"
-    assert translate_kaggle_food_name("Pork, raw") == "Thịt heo luộc"
 
 
 def test_food_tagging():

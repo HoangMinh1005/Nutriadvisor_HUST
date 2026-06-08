@@ -72,6 +72,10 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      - ./csp:/app/csp
+      - ./frontend:/app/frontend
+      - ./models:/models
+      - ./data:/app/data
     depends_on:
       postgres:
         condition: service_healthy

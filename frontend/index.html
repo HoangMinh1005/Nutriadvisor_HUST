@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NutriAdvisor_HUST - ML & Constraint Satisfy Platform</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap"
+        rel="stylesheet">
+    <!-- FontAwesome for icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="/assets/css/styles.css">
+</head>
+
+<body class="dark-mode">
+
+    <!-- Top Navigation Bar (Shared across Dashboard and forms, hidden on Login) -->
+    <header id="main-header" class="hidden">
+        <div class="logo-container">
+            <div class="logo-icon">
+                <i class="fa-solid fa-heart-pulse"></i>
+            </div>
+            <div class="logo-text">
+                <h1>NutriAdvisor_HUST</h1>
+                <span>ML & CONSTRAINT SATISFY PLATFORM</span>
+            </div>
+        </div>
+        <div class="user-control" id="header-user-controls">
+            <div class="user-badge" id="btn-edit-profile">
+                <div class="avatar-circle" id="user-avatar-initials">VM</div>
+                <span id="user-display-name">Vũ Hoàng Minh</span>
+            </div>
+            <button id="btn-logout" class="logout-link">
+                <i class="fa-solid fa-arrow-right-from-bracket"></i> Đăng xuất
+            </button>
+        </div>
+    </header>
+
+    <!-- 1. LOGIN SCREEN -->
+    <main id="screen-login" class="screen-container">
+        <header class="login-header">
+            <div class="logo-icon large"><i class="fa-solid fa-heart-pulse"></i></div>
+            <div class="logo-text">
+                <h1>NutriAdvisor_HUST</h1>
+                <span>ML & CONSTRAINT SATISFY PLATFORM</span>
+            </div>
+        </header>
+        <div class="login-card glass-card">
+            <h2>Đăng nhập Cổng Dinh Dưỡng</h2>
+            <p class="subtitle">NutriAdvisor hỗ trợ sinh viên HUST đạt trạng thái tối ưu cơ thể</p>
+
+            <form id="login-form">
+                <div class="form-group">
+                    <label for="login-email">EMAIL TÀI KHOẢN HUST</label>
+                    <div class="input-wrapper">
+                        <i class="fa-regular fa-user"></i>
+                        <input type="email" id="login-email" required placeholder="student.hust@sis.hust.edu.vn"
+                            value="student.hust@sis.hust.edu.vn">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="login-password">MẬT KHẨU</label>
+                    <div class="input-wrapper">
+                        <i class="fa-solid fa-lock"></i>
+                        <input type="password" id="login-password" required placeholder="••••••••" value="password123">
+                    </div>
+                </div>
+
+                <div class="checkbox-group">
+                    <label class="checkbox-container">
+                        <input type="checkbox" id="login-first-time" checked>
+                        <span class="checkmark"></span>
+                        <div class="checkbox-text">
+                            <strong>Tải lượng: Đăng nhập lần đầu</strong>
+                            <p>Cần cung cấp thông số sức khỏe và ngân sách (Onboarding) để huấn luyện mô hình.</p>
+                        </div>
+                    </label>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block">Đăng Nhập Ngay</button>
+            </form>
+        </div>
+    </main>
+
+    <!-- 2. ONBOARDING SCREEN -->
+    <main id="screen-onboarding" class="screen-container hidden">
+        <div class="onboarding-card glass-card">
+            <div class="card-header">
+                <div class="icon-circle"><i class="fa-solid fa-sliders"></i></div>
+                <div>
+                    <h2>Khởi Tạo Chỉ Số Sinh Lý Ban Đầu</h2>
+                    <p class="subtitle">Các thông số này sẽ làm đầu vào huấn luyện bộ phân tích và dự báo Random Forest
+                    </p>
+                </div>
+            </div>
+
+            <form id="onboarding-form">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="ob-fullname">Họ và Tên</label>
+                        <input type="text" id="ob-fullname" required placeholder="Vũ Hoàng Minh" value="Vũ Hoàng Minh">
+                    </div>
+                    <div class="form-group">
+                        <label for="ob-age">Tuổi đời</label>
+                        <input type="number" id="ob-age" required min="15" max="100" placeholder="21" value="21">
+                    </div>
+                    <div class="form-group">
+                        <label for="ob-height">Chiều cao (cm)</label>
+                        <input type="number" id="ob-height" required min="100" max="250" placeholder="175" value="175">
+                    </div>
+                    <div class="form-group">
+                        <label for="ob-weight">Cân nặng hiện tại (kg)</label>
+                        <input type="number" step="0.1" id="ob-weight" required min="30" max="250" placeholder="72.5"
+                            value="72.5">
+                    </div>
+                    <div class="form-group">
+                        <label for="ob-gender">Giới tính sinh học</label>
+                        <select id="ob-gender" required>
+                            <option value="male" selected>Nam</option>
+                            <option value="female">Nữ</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="ob-activity">Cường độ vận động thể chất</label>
+                        <select id="ob-activity" required>
+                            <option value="Sedentary">Không vận động / Ít vận động</option>
+                            <option value="Lightly Active">Vận động nhẹ (từ 1 đến 3 ngày mỗi tuần)</option>
+                            <option value="Moderately Active" selected>Vận động vừa (từ 3 đến 5 ngày mỗi tuần)</option>
+                            <option value="Very Active">Vận động nặng (từ 6 đến 7 ngày mỗi tuần)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="ob-calories">Ngân sách Calo nạp hằng ngày</label>
+                        <input type="number" id="ob-calories" required min="800" max="10000" placeholder="2200"
+                            value="2200">
+                    </div>
+                    <div class="form-group">
+                        <label for="ob-budget">Kinh phí ăn uống hằng ngày (VNĐ)</label>
+                        <input type="number" id="ob-budget" required min="10000" max="5000000" placeholder="200000"
+                            value="200000">
+                    </div>
+                </div>
+
+                <div class="slider-section">
+                    <h3>Biến Confounding Sinh Lý Học</h3>
+                    <div class="form-group">
+                        <div class="slider-header">
+                            <label for="ob-sleep">Chất lượng Giấc ngủ trung bình</label>
+                            <span class="slider-val" id="val-sleep">4 trên 5</span>
+                        </div>
+                        <input type="range" id="ob-sleep" min="1" max="5" value="4" class="slider sleep-slider">
+                    </div>
+
+                    <div class="form-group">
+                        <div class="slider-header">
+                            <label for="ob-stress">Mức độ Căng thẳng - Học tập thi cử</label>
+                            <span class="slider-val" id="val-stress">3 trên 5</span>
+                        </div>
+                        <input type="range" id="ob-stress" min="1" max="5" value="3" class="slider stress-slider">
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block margin-top">Hoàn Thành & Khởi Chạy Thuật
+                    Toán</button>
+            </form>
+        </div>
+    </main>
+
+    <!-- 3. DASHBOARD SCREEN -->
+    <main id="screen-dashboard" class="dashboard-layout hidden">
+        <!-- Dashboard Left Column -->
+        <section class="dashboard-left">
+            <!-- 3.1 Top Metrics Bar -->
+            <div class="metrics-row">
+                <div class="metric-card glass-card">
+                    <div class="metric-icon weight-icon"><i class="fa-solid fa-weight-scale"></i></div>
+                    <div class="metric-data">
+                        <span class="metric-label">CÂN NẶNG</span>
+                        <h3 class="metric-value"><span id="lbl-weight">--</span> <span class="unit">kg</span></h3>
+                    </div>
+                </div>
+                <div class="metric-card glass-card">
+                    <div class="metric-icon height-icon"><i class="fa-solid fa-ruler-vertical"></i></div>
+                    <div class="metric-data">
+                        <span class="metric-label">CHIỀU CAO</span>
+                        <h3 class="metric-value"><span id="lbl-height">--</span> <span class="unit">cm</span></h3>
+                    </div>
+                </div>
+                <div class="metric-card glass-card">
+                    <div class="metric-icon bmi-icon"><i class="fa-solid fa-heart"></i></div>
+                    <div class="metric-data">
+                        <span class="metric-label">BMI</span>
+                        <div class="metric-bmi-badge">
+                            <h3 class="metric-value" id="lbl-bmi">--</h3>
+                            <span class="badge" id="lbl-bmi-status">--</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="metric-card glass-card">
+                    <div class="metric-icon cal-icon"><i class="fa-solid fa-fire"></i></div>
+                    <div class="metric-data">
+                        <span class="metric-label">CALO HẰNG NGÀY</span>
+                        <h3 class="metric-value"><span id="lbl-calories">--</span> <span class="unit">kcal</span></h3>
+                    </div>
+                </div>
+                <div class="metric-card glass-card">
+                    <div class="metric-icon budget-icon"><i class="fa-solid fa-wallet"></i></div>
+                    <div class="metric-data">
+                        <span class="metric-label">KINH PHÍ</span>
+                        <h3 class="metric-value"><span id="lbl-budget">--</span> <span class="unit">mỗi ngày</span></h3>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 3.2 Optimized CSP Weekly Schedule Card -->
+            <div class="weekly-schedule-card glass-card">
+                <div class="schedule-header">
+                    <div class="title-with-icon">
+                        <i class="fa-solid fa-calendar-week"></i>
+                        <h2>Thực Đơn Tuần CSP Tối Ưu</h2>
+                    </div>
+                    <div class="schedule-controls">
+                        <button class="btn-toggle active" id="btn-toggle-default">
+                            <i class="fa-solid fa-utensils"></i> Mặc định
+                        </button>
+                        <button class="btn-toggle" id="btn-toggle-knn">
+                            <i class="fa-solid fa-rotate"></i> KNN INLINE
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Day Tabs Navigation -->
+                <div class="day-tabs-wrapper">
+                    <nav class="day-tabs" id="day-tabs-list">
+                        <button class="tab-item active" data-day="1">Thứ Hai</button>
+                        <button class="tab-item" data-day="2">Thứ Ba</button>
+                        <button class="tab-item" data-day="3">Thứ Tư</button>
+                        <button class="tab-item" data-day="4">Thứ Năm</button>
+                        <button class="tab-item" data-day="5">Thứ Sáu</button>
+                        <button class="tab-item" data-day="6">Thứ Bảy</button>
+                        <button class="tab-item" data-day="7">Chủ Nhật</button>
+                    </nav>
+                </div>
+
+                <!-- Meal slots listing (strictly 3 slots: Breakfast, Lunch, Dinner) -->
+                <div class="meal-slots-list" id="meals-container">
+                    <!-- Meal Rows are dynamically injected here by JS -->
+                </div>
+            </div>
+
+            <!-- 3.3 Body Forecast Line Chart -->
+            <div class="chart-card glass-card">
+                <div class="chart-header">
+                    <i class="fa-solid fa-chart-line"></i>
+                    <div>
+                        <h2>Xu Hướng Biến Động Thể Trạng 4 Tuần</h2>
+                        <p class="chart-subtitle">Dự báo dựa trên bộ giải tích hợp Random Forest và các yếu tố
+                            Confounding</p>
+                    </div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="weightForecastChart"></canvas>
+                </div>
+            </div>
+
+            <!-- 3.4 Feature Importance Horizontal Bar Chart -->
+            <div class="chart-card glass-card">
+                <div class="chart-header">
+                    <i class="fa-solid fa-chart-bar"></i>
+                    <div>
+                        <h2>Độ Ảnh Hưởng Đến Cân Nặng (Random Forest Feature Importance)</h2>
+                    </div>
+                </div>
+                <div class="chart-container importance-container">
+                    <canvas id="featureImportanceChart"></canvas>
+                </div>
+            </div>
+        </section>
+
+        <!-- Dashboard Right Column (AI Chatbot Pane) -->
+        <section class="dashboard-right glass-card chatbot-container">
+            <header class="chat-header">
+                <div class="bot-avatar"><i class="fa-solid fa-robot"></i></div>
+                <div>
+                    <h2>Trợ Lý Dinh Dưỡng HUST AI <span class="sparkle"><i
+                                class="fa-solid fa-wand-magic-sparkles"></i></span></h2>
+                    <span>Định tuyến NLP ý định thông minh</span>
+                </div>
+                <button class="btn-icon" id="btn-clear-chat" title="Xóa lịch sử trò chuyện"><i
+                        class="fa-solid fa-arrows-rotate"></i></button>
+            </header>
+
+            <!-- Chat History Area -->
+            <div class="chat-messages" id="chat-history">
+                <div class="chat-bubble bot-message">
+                    <div class="bubble-content">
+                        Xin chào Vũ Hoàng Minh! Hệ thống đã kích hoạt giao diện tối ưu hóa. Bây giờ bạn có thể bấm trực
+                        tiếp vào bất kỳ món ăn nào trong thực đơn tuần ở bên trái. Menu đề xuất KNN sẽ xổ xuống ngay lập
+                        tức để bạn lựa chọn hoán đổi nhanh chóng!
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Prompts Row -->
+            <div class="quick-prompts-container" id="quick-prompts-panel">
+                <span class="quick-prompt-label">HỎI NHANH MẪU:</span>
+                <div class="quick-prompts">
+                    <button class="qp-btn" data-query="Tôi không muốn ăn bún riêu, đổi món gì?">
+                        <span>Tôi không muốn ăn bún riêu, đổi món gì?</span> <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                    <button class="qp-btn" data-query="lượng protein trong thịt bò">
+                        <span>Lượng protein trong thịt bò</span> <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                    <button class="qp-btn" data-query="Hỏi viết code Python (Thử Guardrail)">
+                        <span>Hỏi viết code Python (Thử Guardrail)</span> <i class="fa-solid fa-chevron-right"></i>
+                    </button>
+                </div>
+            </div>
+
+            <!-- Chat Input Area -->
+            <div class="chat-input-area">
+                <form id="chat-input-form">
+                    <input type="text" id="chat-text-input" placeholder="Hỏi đổi món, tra calo, thực đơn..."
+                        autocomplete="off">
+                    <button type="submit" id="btn-send-chat" class="btn btn-send">Gửi</button>
+                </form>
+            </div>
+        </section>
+    </main>
+
+    <!-- 4. PROFILE ADJUSTMENT MODAL POPUP -->
+    <div id="modal-profile" class="modal-overlay hidden">
+        <div class="modal-card glass-card">
+            <div class="modal-header">
+                <div class="title-with-icon">
+                    <i class="fa-regular fa-user"></i>
+                    <h2>Hồ Sơ & Điều Chỉnh Chỉ Số Sinh Lý</h2>
+                </div>
+                <button class="btn-close" id="btn-modal-close"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+
+            <form id="profile-edit-form">
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label for="edit-fullname">Họ và Tên</label>
+                        <input type="text" id="edit-fullname" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-age">Tuổi đời</label>
+                        <input type="number" id="edit-age" required min="15" max="100">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-height">Chiều cao (cm)</label>
+                        <input type="number" id="edit-height" required min="100" max="250">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-weight">Cân nặng (kg)</label>
+                        <input type="number" step="0.1" id="edit-weight" required min="30" max="250">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-gender">Giới tính sinh học</label>
+                        <select id="edit-gender" required>
+                            <option value="male">Nam</option>
+                            <option value="female">Nữ</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-activity">Cường độ vận động thể chất</label>
+                        <select id="edit-activity" required>
+                            <option value="Sedentary">Không vận động / Ít vận động</option>
+                            <option value="Lightly Active">Vận động nhẹ (từ 1 đến 3 ngày mỗi tuần)</option>
+                            <option value="Moderately Active">Vận động vừa (từ 3 đến 5 ngày mỗi tuần)</option>
+                            <option value="Very Active">Vận động nặng (từ 6 đến 7 ngày mỗi tuần)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-calories">Ngân sách Calo hằng ngày</label>
+                        <input type="number" id="edit-calories" required min="800" max="10000">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-budget">Kinh phí hằng ngày (VNĐ)</label>
+                        <input type="number" id="edit-budget" required min="10000" max="5000000">
+                    </div>
+                </div>
+
+                <div class="slider-section">
+                    <h3>Biến Confounding Sinh Lý Học</h3>
+                    <div class="form-group">
+                        <div class="slider-header">
+                            <label for="edit-sleep">Chất lượng Giấc ngủ trung bình</label>
+                            <span class="slider-val" id="val-edit-sleep">--</span>
+                        </div>
+                        <input type="range" id="edit-sleep" min="1" max="5" class="slider sleep-slider">
+                    </div>
+
+                    <div class="form-group">
+                        <div class="slider-header">
+                            <label for="edit-stress">Mức độ Căng thẳng</label>
+                            <span class="slider-val" id="val-edit-stress">--</span>
+                        </div>
+                        <input type="range" id="edit-stress" min="1" max="5" class="slider stress-slider">
+                    </div>
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="btn-modal-cancel">Hủy bỏ</button>
+                    <button type="submit" class="btn btn-primary" id="btn-modal-submit">Cập nhật</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- JS logic scripts -->
+    <script src="/assets/js/app.js"></script>
+</body>
+
+</html>

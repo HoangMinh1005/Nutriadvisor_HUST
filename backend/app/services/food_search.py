@@ -49,6 +49,16 @@ def _format_items(rows: list[dict[str, Any]], include_score: bool = False) -> li
             "protein": float(row.get("protein_g") or 0),
             "fat": float(row.get("fat_g") or 0),
             "carbs": float(row.get("carbs_g") or 0),
+            "vitamin_a_mcg": float(row.get("vitamin_a_mcg") or 0),
+            "beta_carotene_mcg": float(row.get("beta_carotene_mcg") or 0),
+            "vitamin_c_mg": float(row.get("vitamin_c_mg") or 0),
+            "calcium_mg": float(row.get("calcium_mg") or 0),
+            "iron_mg": float(row.get("iron_mg") or 0),
+            "zinc_mg": float(row.get("zinc_mg") or 0),
+            "sodium_mg": float(row.get("sodium_mg") or 0),
+            "cholesterol_mg": float(row.get("cholesterol_mg") or 0),
+            "magnesium_mg": float(row.get("magnesium_mg") or 0),
+            "transfat_mg": float(row.get("transfat_mg") or 0),
             "alias_texts": _fetch_aliases_for_food(int(row["food_id"])),
         }
         if include_score:
@@ -73,7 +83,17 @@ def _search_exact(query: str, limit: int) -> list[dict[str, Any]]:
             n.energy_kcal,
             n.protein_g,
             n.fat_g,
-            n.carbs_g
+            n.carbs_g,
+            n.vitamin_a_mcg,
+            n.beta_carotene_mcg,
+            n.vitamin_c_mg,
+            n.calcium_mg,
+            n.iron_mg,
+            n.zinc_mg,
+            n.sodium_mg,
+            n.cholesterol_mg,
+            n.magnesium_mg,
+            n.transfat_mg
         FROM food_aliases a
         JOIN foods f ON f.food_id = a.food_id
         JOIN food_groups g ON g.food_group_id = f.food_group_id
@@ -105,6 +125,16 @@ def _search_fuzzy(query: str, limit: int) -> list[dict[str, Any]]:
             n.protein_g,
             n.fat_g,
             n.carbs_g,
+            n.vitamin_a_mcg,
+            n.beta_carotene_mcg,
+            n.vitamin_c_mg,
+            n.calcium_mg,
+            n.iron_mg,
+            n.zinc_mg,
+            n.sodium_mg,
+            n.cholesterol_mg,
+            n.magnesium_mg,
+            n.transfat_mg,
             similarity(a.alias_text, %s) AS match_score
         FROM food_aliases a
         JOIN foods f ON f.food_id = a.food_id
@@ -134,6 +164,16 @@ def _search_fallback(query: str, limit: int) -> list[dict[str, Any]]:
             n.protein_g,
             n.fat_g,
             n.carbs_g,
+            n.vitamin_a_mcg,
+            n.beta_carotene_mcg,
+            n.vitamin_c_mg,
+            n.calcium_mg,
+            n.iron_mg,
+            n.zinc_mg,
+            n.sodium_mg,
+            n.cholesterol_mg,
+            n.magnesium_mg,
+            n.transfat_mg,
             GREATEST(
                 similarity(f.canonical_name_en, %s),
                 similarity(COALESCE(f.name_vi, ''), %s)

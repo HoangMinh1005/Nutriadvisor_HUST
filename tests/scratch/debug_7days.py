@@ -9,7 +9,6 @@ class DiagnosticScheduler(MealScheduler):
     def _get_meal_plan_for_solution(self, sol, constraints, tolerance_multiplier, all_carbs, all_proteins, all_fibers, all_snacks, day_excluded_ids=None):
         # We copy the original _get_meal_plan_for_solution logic but print verbose info for Candidate 1 of Day 2
         from csp.classification import is_single_bowl_meal, is_clean_protein_gym, get_max_serving_g, get_food_role, is_standalone_main_dish
-        from csp.scheduler import translate_kaggle_food_name
         
         # Helper to find a safe complementary item from a pool
         def get_complementary(pool, excluded_ids=None):

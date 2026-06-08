@@ -53,6 +53,19 @@ class DatabaseChecker:
                 self.connection = psycopg2.connect(self.db_url)
                 self.cursor = self.connection.cursor()
                 print(f"✅ Connected to PostgreSQL (Attempt {attempt}/{max_retries})")
+                
+                # Auto-migrate/verify user_profiles columns
+                try:
+                    self.cursor.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS budget_vnd_max INTEGER DEFAULT 200000;")
+                    self.cursor.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS physical_activity_level VARCHAR(50) DEFAULT 'Moderately Active';")
+                    self.cursor.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS sleep_quality VARCHAR(20) DEFAULT 'Good';")
+                    self.cursor.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS stress_level INTEGER DEFAULT 5;")
+                    self.connection.commit()
+                    print("  ✅ Automatically verified and updated user_profiles schema columns")
+                except Exception as migrate_exc:
+                    self.connection.rollback()
+                    print(f"  ⚠️ WARNING: Auto-migration of user_profiles columns failed: {migrate_exc}")
+                    
                 return True
             except psycopg2.OperationalError as e:
                 print(f"⏳ Connection attempt {attempt}/{max_retries} failed: {e}")

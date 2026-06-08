@@ -21,7 +21,10 @@ class KNNFoodRecommender:
         self.feature_matrix = feature_matrix
         self.food_metadata = food_metadata
 
-        from backend.ml.feature_store.extract_features import NUTRIENT_COLUMNS
+        try:
+            from backend.ml.feature_store.extract_features import NUTRIENT_COLUMNS
+        except ModuleNotFoundError:
+            from ml.feature_store.extract_features import NUTRIENT_COLUMNS
 
         # Set default min/max fallbacks for safety
         defaults = {
@@ -88,7 +91,10 @@ class KNNFoodRecommender:
             "carbs_g": target_c_g / portion_divisor,
         }
 
-        from backend.ml.feature_store.extract_features import NUTRIENT_COLUMNS
+        try:
+            from backend.ml.feature_store.extract_features import NUTRIENT_COLUMNS
+        except ModuleNotFoundError:
+            from ml.feature_store.extract_features import NUTRIENT_COLUMNS
         macro_keys = list(NUTRIENT_COLUMNS[:4])
         query_vector = self._normalize_query_vector(target_dict, macro_keys)
 
@@ -350,7 +356,10 @@ class KNNFoodRecommender:
         }
 
         # 4. Query with the deficit vector
-        from backend.ml.feature_store.extract_features import NUTRIENT_COLUMNS
+        try:
+            from backend.ml.feature_store.extract_features import NUTRIENT_COLUMNS
+        except ModuleNotFoundError:
+            from ml.feature_store.extract_features import NUTRIENT_COLUMNS
         macro_keys = list(NUTRIENT_COLUMNS[:4])
         query_vector = self._normalize_query_vector(deficit_dict, macro_keys)
 

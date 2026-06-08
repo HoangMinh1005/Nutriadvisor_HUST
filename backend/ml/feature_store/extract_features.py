@@ -9,7 +9,33 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-import psycopg
+try:
+    import psycopg
+except ImportError:
+    import psycopg2
+    class Psycopg3ConnectionProxy:
+        def __init__(self, conn):
+            self._conn = conn
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            try:
+                if exc_type is not None:
+                    self._conn.rollback()
+                else:
+                    self._conn.commit()
+            finally:
+                self._conn.close()
+        def close(self):
+            self._conn.close()
+        def cursor(self, *args, **kwargs):
+            return self._conn.cursor(*args, **kwargs)
+    class psycopg:
+        @staticmethod
+        def connect(*args, **kwargs):
+            return Psycopg3ConnectionProxy(psycopg2.connect(*args, **kwargs))
 from dotenv import load_dotenv
 
 ROOT_DIR = Path(__file__).resolve().parents[3]

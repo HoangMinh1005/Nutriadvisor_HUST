@@ -5,8 +5,12 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, List
 
-from backend.ml.feature_store.extract_features import FeatureStore
-from backend.ml.recsys.knn_recommender import KNNFoodRecommender
+try:
+    from backend.ml.feature_store.extract_features import FeatureStore
+    from backend.ml.recsys.knn_recommender import KNNFoodRecommender
+except ModuleNotFoundError:
+    from ml.feature_store.extract_features import FeatureStore
+    from ml.recsys.knn_recommender import KNNFoodRecommender
 from csp.scheduler import MealScheduler
 
 

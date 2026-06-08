@@ -18,7 +18,33 @@ import logging
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-import psycopg
+try:
+    import psycopg
+except ImportError:
+    import psycopg2
+    class Psycopg3ConnectionProxy:
+        def __init__(self, conn):
+            self._conn = conn
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            try:
+                if exc_type is not None:
+                    self._conn.rollback()
+                else:
+                    self._conn.commit()
+            finally:
+                self._conn.close()
+        def close(self):
+            self._conn.close()
+        def cursor(self, *args, **kwargs):
+            return self._conn.cursor(*args, **kwargs)
+    class psycopg:
+        @staticmethod
+        def connect(*args, **kwargs):
+            return Psycopg3ConnectionProxy(psycopg2.connect(*args, **kwargs))
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.naive_bayes import MultinomialNB
 from dotenv import load_dotenv
@@ -29,7 +55,11 @@ from .cache import IntentCache
 from .prompts import GEMINI_SYSTEM_PROMPT, VALID_INTENTS, build_user_prompt
 from .schemas import NLPResult, TrainingExample
 
-DEFAULT_MODEL_DIR = Path("models") / "nlp"
+WORKSPACE_ROOT = Path(__file__).resolve().parents[3]
+if os.path.exists("/models"):
+    DEFAULT_MODEL_DIR = Path("/models") / "nlp"
+else:
+    DEFAULT_MODEL_DIR = WORKSPACE_ROOT / "models" / "nlp"
 DEFAULT_DATA_PATH = Path(__file__).resolve().parent / "data" / "intent_examples.jsonl"
 MODEL_ARTIFACT_NAME = "intent_engine.pkl"
 PROMPT_VERSION = "v3"
@@ -924,6 +954,64 @@ class IntentEngine:
             },
             "global_average_100g": global_average,
             "categories": category_averages,
+        }
+
+    def _has_in_scope_keywords(self, query: str) -> bool:
+        q = query.lower()
+        keywords = [
+            "thực đơn", "thuc don", "món", "mon", "ăn", "an", "uống", "uong",
+            "calo", "kcal", "protein", "đạm", "dam", "béo", "beo", "lipid", "lipit",
+            "carb", "tinh bột", "tinh bot", "chất xơ", "chat xo", "dinh dưỡng", "dinh duong",
+            "dị ứng", "di ung", "thực phẩm", "thuc pham", "thay thế", "thay the", "thay", "đổi", "doi",
+            "ức gà", "uc ga", "bò", "bo", "heo", "gà", "ga", "cá", "ca", "trứng", "trung",
+            "sữa", "sua", "rau", "yến mạch", "yen mach", "hải sản", "hai san",
+            "tăng", "tang", "giảm", "giam", "cân", "can", "kg", "bmi", "gym", "tập", "tap",
+            "cơ", "co", "mỡ", "mo", "duy trì", "duy tri", "vnd", "ngàn", "ngan", "nghìn", "nghin",
+            "giá", "gia", "tiền", "tien", "budget", "chi phí", "chi phi", "kinh phí", "kinh phi",
+            "rẻ", "re", "đắt", "dat"
+        ]
+        return any(kw in q for kw in keywords)
+
+    def predict_chat_intent(self, user_query: str) -> dict[str, Any]:
+        """Predict user intent for chat interface, enforcing intent guardrails (Format 2)."""
+        nlp_result = self.predict(user_query)
+        intent = nlp_result.intent
+        entities = nlp_result.entities or {}
+
+        # Check if the query contains any in-scope keywords. If not, reject immediately.
+        if not self._has_in_scope_keywords(user_query):
+            chat_intent = "OUT_OF_SCOPE"
+        else:
+            # Check if it is a replacement query (FIND_ALTERNATIVE)
+            is_replacement = (
+                entities.get("replacement_target") is not None or 
+                entities.get("query_keyword") == "thay thế" or
+                (intent == "unknown" and self._is_replacement_query(user_query.lower()))
+            )
+
+            # Determine the matched chat domain
+            if is_replacement:
+                chat_intent = "FIND_ALTERNATIVE"
+            elif intent == "recommend_meal":
+                chat_intent = "SUGGEST_MEAL"
+            elif intent == "ask_nutrition":
+                chat_intent = "QUERY_NUTRITION"
+            else:
+                chat_intent = "OUT_OF_SCOPE"
+
+        if chat_intent == "OUT_OF_SCOPE":
+            return {
+                "status": "rejected",
+                "intent": "OUT_OF_SCOPE",
+                "reply": "NutriAdvisor hiện tại chỉ hỗ trợ các chức năng: (1) Gợi ý thực đơn nhanh, (2) Tra cứu dinh dưỡng món ăn, và (3) Tìm món thay thế tương đương. Câu hỏi của bạn không nằm trong phạm vi hỗ trợ của hệ thống."
+            }
+
+        return {
+            "status": "success",
+            "intent": chat_intent,
+            "entities": entities,
+            "confidence": nlp_result.confidence,
+            "source": nlp_result.source
         }
 
     def to_csp_payload(self, nlp_result: NLPResult) -> dict[str, Any]:

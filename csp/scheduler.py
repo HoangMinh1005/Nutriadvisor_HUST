@@ -7,7 +7,33 @@ import random
 from collections import Counter
 from typing import Any, Dict, List, Set
 
-import psycopg
+try:
+    import psycopg
+except ImportError:
+    import psycopg2
+    class Psycopg3ConnectionProxy:
+        def __init__(self, conn):
+            self._conn = conn
+        def __getattr__(self, name):
+            return getattr(self._conn, name)
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            try:
+                if exc_type is not None:
+                    self._conn.rollback()
+                else:
+                    self._conn.commit()
+            finally:
+                self._conn.close()
+        def close(self):
+            self._conn.close()
+        def cursor(self, *args, **kwargs):
+            return self._conn.cursor(*args, **kwargs)
+    class psycopg:
+        @staticmethod
+        def connect(*args, **kwargs):
+            return Psycopg3ConnectionProxy(psycopg2.connect(*args, **kwargs))
 from constraint import Problem
 
 from .constraints import NutrientConstraints
@@ -304,9 +330,15 @@ class MealScheduler:
         c_ratio = constraints.macro_ratios.get("carbs", 0.3)
         f_ratio = constraints.macro_ratios.get("fat", 0.3)
 
-        w_prot_space = [150.0, 180.0, 220.0, 260.0, 300.0, 350.0] if self.is_gym else [100.0, 150.0, 200.0]
-        w_crb_space = [100.0, 140.0, 180.0, 220.0, 260.0, 300.0]
-        w_fix_space = [100.0, 120.0, 150.0]
+        daily_target = float(self.user.get("daily_calorie_target") or 1800.0)
+        if daily_target <= 1200.0:
+            w_prot_space = [70.0, 100.0, 150.0]
+            w_crb_space = [70.0, 100.0, 140.0]
+            w_fix_space = [50.0, 75.0, 100.0]
+        else:
+            w_prot_space = [150.0, 180.0, 220.0, 260.0, 300.0, 350.0] if (self.is_gym and daily_target >= 1600.0) else [100.0, 150.0, 200.0]
+            w_crb_space = [100.0, 140.0, 180.0, 220.0, 260.0, 300.0]
+            w_fix_space = [100.0, 120.0, 150.0]
 
         preclassified_components = []
         for comp in components:
@@ -358,6 +390,16 @@ class MealScheduler:
                         total_c += f_carb * factor
 
                     cal_error = abs(total_cal - constraints.daily_calorie_target) / constraints.daily_calorie_target
+                    
+                    # Add heavy penalty if total calories are outside allowed bounds
+                    tolerance = constraints.daily_calorie_target * constraints.calorie_tolerance_pct * tolerance_multiplier
+                    min_cal = constraints.daily_calorie_target - tolerance
+                    max_cal = constraints.daily_calorie_target + tolerance
+                    if not (min_cal <= total_cal <= max_cal):
+                        cal_penalty = 1000.0
+                    else:
+                        cal_penalty = 0.0
+
                     total_mass = total_p + total_f + total_c
                     if total_mass > 0:
                         macro_error = (
@@ -367,7 +409,7 @@ class MealScheduler:
                         )
                     else: macro_error = 1.0
                         
-                    error = cal_error + macro_error
+                    error = cal_error + macro_error + cal_penalty
                     if error < min_error:
                         min_error = error
                         best_w_protein, best_w_carb, best_w_fixed = w_prot, w_crb, w_fix
@@ -385,6 +427,7 @@ class MealScheduler:
             names_vi = []
             meal_cost, meal_cal, meal_p, meal_f, meal_c = 0.0, 0.0, 0.0, 0.0, 0.0
             
+            components_data = []
             for comp in slot_comps:
                 f = comp["food"]
                 role = comp["role"]
@@ -398,11 +441,17 @@ class MealScheduler:
                 w = min(w, max_w)
                 
                 factor = w / 100.0
-                meal_cost += float(f.get("cost_vnd_100g") or 15000) * factor
-                meal_cal += float(f.get("calories") or 0.0) * factor
-                meal_p += float(f.get("protein") or 0.0) * factor
-                meal_f += float(f.get("fat") or 0.0) * factor
-                meal_c += float(f.get("carbs") or 0.0) * factor
+                c_cost = float(f.get("cost_vnd_100g") or 15000) * factor
+                c_cal = float(f.get("calories") or 0.0) * factor
+                c_p = float(f.get("protein") or 0.0) * factor
+                c_f = float(f.get("fat") or 0.0) * factor
+                c_c = float(f.get("carbs") or 0.0) * factor
+                
+                meal_cost += c_cost
+                meal_cal += c_cal
+                meal_p += c_p
+                meal_f += c_f
+                meal_c += c_c
                 
                 display = f.get("name_vi") or f.get("canonical_name_en") or "Thực phẩm"
                 display_clean = display
@@ -410,6 +459,17 @@ class MealScheduler:
                     if display_clean.lower().endswith(suffix):
                         display_clean = display_clean[:-len(suffix)].strip()
                 names_vi.append(f"{display_clean} ({int(w)}g)")
+                
+                components_data.append({
+                    "food_id": int(f["food_id"]),
+                    "name": display_clean,
+                    "weight": float(w),
+                    "calories": float(c_cal),
+                    "protein": float(c_p),
+                    "fat": float(c_f),
+                    "carbs": float(c_c),
+                    "cost_vnd_100g": float(f.get("cost_vnd_100g") or 15000)
+                })
 
             day_meals.append({
                 "meal_type": slot,
@@ -421,6 +481,7 @@ class MealScheduler:
                 "fat": meal_f,
                 "carbs": meal_c,
                 "component_food_ids": [c["food"]["food_id"] for c in slot_comps],
+                "components": components_data,
             })
 
         return day_meals

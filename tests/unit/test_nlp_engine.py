@@ -323,3 +323,35 @@ def test_food_mapping_integration(tmp_path):
     assert isinstance(candidates, list)
     # expect structured candidates with id/name
     assert any(isinstance(c, dict) and c.get("id") == "food_004" for c in candidates)
+
+
+def test_predict_chat_intent_guardrails(tmp_path):
+    engine = _trained_engine(tmp_path)
+    engine.cache.clear()
+
+    # In-scope SUGGEST_MEAL
+    suggest_res = engine.predict_chat_intent("Tôi nên ăn gì vào bữa trưa để tăng cơ?")
+    assert suggest_res["status"] == "success"
+    assert suggest_res["intent"] == "SUGGEST_MEAL"
+
+    # In-scope QUERY_NUTRITION
+    query_res = engine.predict_chat_intent("Lượng protein trong 100g ức gà là bao nhiêu?")
+    assert query_res["status"] == "success"
+    assert query_res["intent"] == "QUERY_NUTRITION"
+
+    # In-scope FIND_ALTERNATIVE
+    alt_res = engine.predict_chat_intent("Tôi muốn thay thế cơm trắng bằng gì để tăng chất xơ?")
+    assert alt_res["status"] == "success"
+    assert alt_res["intent"] == "FIND_ALTERNATIVE"
+
+    # Out-of-scope (general update_profile in chat)
+    out_profile = engine.predict_chat_intent("Tôi cao 1m8 và nặng 70kg")
+    assert out_profile["status"] == "rejected"
+    assert out_profile["intent"] == "OUT_OF_SCOPE"
+    assert "NutriAdvisor hiện tại chỉ hỗ trợ" in out_profile["reply"]
+
+    # Out-of-scope (completely random query)
+    out_random = engine.predict_chat_intent("Thời tiết hôm nay ở Hà Nội thế nào?")
+    assert out_random["status"] == "rejected"
+    assert out_random["intent"] == "OUT_OF_SCOPE"
+    assert "NutriAdvisor hiện tại chỉ hỗ trợ" in out_random["reply"]
