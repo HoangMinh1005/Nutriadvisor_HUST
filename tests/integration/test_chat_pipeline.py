@@ -1,5 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
+import backend.app.main as main_module
 from backend.app.main import app
 
 client = TestClient(app)
@@ -79,3 +80,70 @@ def test_chat_suggest_meal_success():
     # Assert calories and cost are populated and reasonable
     assert data["total_calories"] > 0
     assert data["total_cost"] > 0
+
+
+def test_chat_suggest_meal_context_overrides_profile(monkeypatch):
+    """Explicit chat context should beat stored profile defaults."""
+    captured = {}
+
+    class FakeIntentEngine:
+        def predict_chat_intent(self, message):
+            return {
+                "status": "success",
+                "intent": "SUGGEST_MEAL",
+                "entities": {
+                    "calories": 1800,
+                    "budget_vnd": 120000,
+                    "health_goal": "muscle_gain",
+                    "allergies": [],
+                    "dietary_restrictions": [],
+                    "query_keyword": "giàu",
+                    "nutrients": ["protein_g"],
+                    "profile_updates": {
+                        "daily_calorie_target": 1800,
+                    },
+                },
+            }
+
+    class FakeMealPipeline:
+        def generate_meal_plan(self, profile):
+            captured["profile"] = profile
+            return {
+                "feasible": True,
+                "meal_plan": [{
+                    "day": 1,
+                    "meals": [{
+                        "meal_type": "lunch",
+                        "food_id": 1,
+                        "name": "Trứng gà ta + cơm",
+                        "calories": 600,
+                        "protein": 35,
+                        "fat": 15,
+                        "carbs": 70,
+                        "total_cost_vnd": 25000,
+                    }],
+                }],
+            }
+
+    monkeypatch.setattr(main_module, "intent_engine", FakeIntentEngine())
+    monkeypatch.setattr(main_module, "meal_pipeline", FakeMealPipeline())
+
+    payload = {
+        "message": "Gợi ý thực đơn bình thường 1800 calo nhiều protein kinh phí 120k",
+        "user_profile": {
+            "daily_calorie_target": 2600,
+            "budget_vnd_max": 300000,
+            "dietary_restrictions": ["vegan"],
+            "macro_ratios": {"protein": 0.20, "fat": 0.30, "carbs": 0.50},
+        },
+    }
+    response = client.post("/api/v1/chat", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["effective_profile"]["daily_calorie_target"] == 1800.0
+    assert data["effective_profile"]["budget_vnd_max"] == 120000.0
+    assert data["effective_profile"]["dietary_restrictions"] == []
+    assert data["effective_profile"]["macro_ratios"]["protein"] >= 0.35
+    assert captured["profile"]["daily_calorie_target"] == 1800.0
+    assert captured["profile"]["dietary_restrictions"] == []

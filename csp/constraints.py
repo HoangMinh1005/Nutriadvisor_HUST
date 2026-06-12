@@ -16,6 +16,7 @@ class NutrientConstraints:
         allergies: List[str] | None = None,
         budget_vnd_max: float | None = None,
         max_food_occurrences_per_week: int = 2,
+        min_budget_floor_pct: float = 0.55,
     ) -> None:
         self.daily_calorie_target = daily_calorie_target
         self.calorie_tolerance_pct = calorie_tolerance_pct
@@ -24,6 +25,7 @@ class NutrientConstraints:
         self.allergies = [a.lower().strip() for a in (allergies or []) if a.strip()]
         self.budget_vnd_max = budget_vnd_max
         self.max_food_occurrences_per_week = max_food_occurrences_per_week
+        self.min_budget_floor_pct = min_budget_floor_pct
 
     def check_daily_calories(self, food_nutrients: List[Dict[str, Any]], tolerance_multiplier: float = 1.0) -> bool:
         """Verify that the daily calories sum lies within acceptable bounds."""
@@ -162,7 +164,7 @@ class NutrientConstraints:
         else:
             # Tỷ lệ điều chỉnh sàn ngân sách theo calo mục tiêu để tránh vô nghiệm khi ăn ít calo
             cal_scale = min(1.0, self.daily_calorie_target / 2000.0)
-            min_budget = self.budget_vnd_max * 0.55 * cal_scale
+            min_budget = self.budget_vnd_max * self.min_budget_floor_pct * cal_scale
         return min_budget <= total_cost <= allowed_budget
 
 
@@ -210,4 +212,3 @@ class NutrientConstraints:
             and l_min <= l_pct <= l_max
             and d_min <= d_pct <= d_max
         )
-

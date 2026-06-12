@@ -87,6 +87,20 @@ def test_budget_prefers_explicit_budget_cue_over_age(tmp_path):
     assert result.entities["query_keyword"] == "budget_conscious"
 
 
+def test_meal_suggestion_with_heavy_activity_typo_routes_to_suggest_meal(tmp_path):
+    engine = _trained_engine(tmp_path)
+
+    query = "gợi ý thực đơn cho người vận dộng nặng 2500 calo một ngày, chi phí 200k"
+    result = engine.predict(query)
+    chat_result = engine.predict_chat_intent(query)
+
+    assert result.entities["calories"] == 2500
+    assert result.entities["budget_vnd"] == 200000
+    assert result.entities["profile_updates"]["physical_activity_level"] == "Very Active"
+    assert chat_result["status"] == "success"
+    assert chat_result["intent"] == "SUGGEST_MEAL"
+
+
 def test_profile_updates_are_extracted(tmp_path):
     engine = _trained_engine(tmp_path)
 

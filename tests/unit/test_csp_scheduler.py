@@ -1,6 +1,8 @@
 """Unit tests for the CSP Meal Planning Module."""
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from csp import MealScheduler, NutrientConstraints
@@ -208,6 +210,31 @@ def test_get_max_serving_g():
     powder = {"name_vi": "Bột chuối sấy khô", "category": "trái_cây"}
     assert get_max_serving_g(powder) == 30.0
 
+    # High-calorie plans should allow larger realistic portions
+    assert get_max_serving_g(com, daily_calorie_target=2600) == 380.0
+    assert get_max_serving_g(com, daily_calorie_target=3200) == 450.0
+
+    chicken = {"name_vi": "Ức gà tươi", "category": "thịt_gia_cầm"}
+    assert get_max_serving_g(chicken, is_gym=True, daily_calorie_target=3200) == 550.0
+
+
+def test_high_calorie_plan_forces_snack_slot():
+    scheduler = MealScheduler(
+        {"daily_calorie_target": 2600, "exclude_snacks": True},
+        available_foods=[],
+        db_url=None,
+    )
+    assert scheduler._effective_exclude_snacks() is False
+
+
+def test_restricted_high_calorie_plan_forces_snack_slot():
+    scheduler = MealScheduler(
+        {"daily_calorie_target": 2300, "exclude_snacks": True, "dietary_restrictions": ["halal"]},
+        available_foods=[],
+        db_url=None,
+    )
+    assert scheduler._effective_exclude_snacks() is False
+
 
 def test_food_tagging():
     from csp.scheduler import get_dynamic_tags
@@ -245,6 +272,126 @@ def test_dietary_restriction_filtering():
     assert violates_dietary_restrictions(egg, ["vegan"]) is True
     assert violates_dietary_restrictions(tofu, ["vegan"]) is False
     assert violates_dietary_restrictions(pork, ["halal"]) is True
+
+    fish_cake = {"name_vi": "Chả cá thác lác", "canonical_name_en": "Fish cake", "category": "cá_hải_sản"}
+    fish_sauce = {"name_vi": "Nước mắm", "canonical_name_en": "Fish sauce", "category": "gia_vị"}
+    cheese = {"name_vi": "Phô mai", "canonical_name_en": "Cheese", "category": "sữa"}
+    pork_sausage = {"name_vi": "Giò lụa", "canonical_name_en": "Vietnamese pork sausage", "category": "món ăn chế biến"}
+    pate = {"name_vi": "Pate gan heo", "canonical_name_en": "Pork liver pate", "category": "món ăn chế biến"}
+    blood = {"name_vi": "Tiết luộc", "canonical_name_en": "Blood pudding", "category": "thịt_lợn"}
+    wine = {"name_vi": "Rượu vang", "canonical_name_en": "Wine", "category": "nước giải khát"}
+    soy_milk = {"name_vi": "Sữa đậu nành", "canonical_name_en": "Soy milk", "category": "hạt_các_loại"}
+    peanut_butter = {"name_vi": "Bơ đậu phộng", "canonical_name_en": "Peanut butter", "category": "hạt_các_loại"}
+    grasshopper = {"name_vi": "Châu chấu rang", "canonical_name_en": "Fried grasshopper", "category": "côn_trùng"}
+    quail_egg = {"name_vi": "Trứng chim cút luộc", "canonical_name_en": "Boiled quail egg", "category": "trứng"}
+    quail_meat = {"name_vi": "Chim cút quay", "canonical_name_en": "Roasted quail", "category": "thịt_gia_cầm"}
+
+    assert violates_dietary_restrictions(fish_cake, ["vegetarian"]) is True
+    assert violates_dietary_restrictions(fish_sauce, ["vegetarian"]) is True
+    assert violates_dietary_restrictions(cheese, ["vegetarian"]) is False
+    assert violates_dietary_restrictions(cheese, ["vegan"]) is True
+    assert violates_dietary_restrictions(pork_sausage, ["halal"]) is True
+    assert violates_dietary_restrictions(pate, ["halal"]) is True
+    assert violates_dietary_restrictions(blood, ["halal"]) is True
+    assert violates_dietary_restrictions(wine, ["halal"]) is True
+    assert violates_dietary_restrictions(soy_milk, ["vegan"]) is False
+    assert violates_dietary_restrictions(peanut_butter, ["vegan"]) is False
+    assert violates_dietary_restrictions(grasshopper, ["vegetarian"]) is True
+    assert violates_dietary_restrictions(grasshopper, ["vegan"]) is True
+    assert violates_dietary_restrictions(quail_egg, ["vegetarian"]) is False
+    assert violates_dietary_restrictions(quail_egg, ["vegan"]) is True
+    assert violates_dietary_restrictions(quail_meat, ["vegetarian"]) is True
+
+
+def test_plant_protein_classification_for_vegetarian_csp():
+    from csp.classification import classify_food, get_dynamic_tags
+
+    tofu = {"name_vi": "Đậu phụ luộc", "canonical_name_en": "Boiled tofu", "category": "hạt_các_loại", "protein": 10.9, "fat": 5.4, "carbs": 0.7}
+    soy = {"name_vi": "Đậu tương, đậu nành luộc", "canonical_name_en": "Boiled soybean", "category": "hạt_các_loại", "protein": 16.6, "fat": 9.0, "carbs": 9.9}
+    sweet_bean = {"name_vi": "Chè đậu đỏ ngọt", "canonical_name_en": "Sweet red bean soup", "category": "đồ_ăn_vặt", "protein": 4.0, "fat": 1.0, "carbs": 30.0}
+    soy_milk = {"name_vi": "Sữa đậu nành", "canonical_name_en": "Soy milk", "category": "hạt_các_loại", "calories": 54, "protein": 3.0, "fat": 1.8, "carbs": 5.0}
+    peanut_butter = {"name_vi": "Bơ đậu phộng", "canonical_name_en": "Peanut butter", "category": "hạt_các_loại", "calories": 588, "protein": 25.0, "fat": 50.0, "carbs": 20.0}
+
+    assert "role_plant_protein" in get_dynamic_tags(tofu)
+    assert classify_food(tofu) == "PLANT_PROTEIN"
+    assert classify_food(soy) == "PLANT_PROTEIN"
+    assert classify_food(sweet_bean) != "PLANT_PROTEIN"
+    assert classify_food(soy_milk) != "PLANT_PROTEIN"
+    assert classify_food(peanut_butter) != "PLANT_PROTEIN"
+
+
+def test_plant_protein_only_becomes_core_for_vegetarian_profiles():
+    foods = [
+        {"food_id": 1, "canonical_name_en": "Chicken Breast", "name_vi": "Ức gà", "calories": 165, "protein": 31, "fat": 3.6, "carbs": 0, "cost_vnd_100g": 15000, "category": "thịt_gia_cầm"},
+        {"food_id": 2, "canonical_name_en": "Boiled tofu", "name_vi": "Đậu phụ luộc", "calories": 76, "protein": 10.9, "fat": 5.4, "carbs": 0.7, "cost_vnd_100g": 6000, "category": "hạt_các_loại"},
+        {"food_id": 3, "canonical_name_en": "White Rice", "name_vi": "Cơm trắng", "calories": 130, "protein": 2.7, "fat": 0.3, "carbs": 28, "cost_vnd_100g": 1800, "category": "tinh_bột"},
+        {"food_id": 4, "canonical_name_en": "Cabbage", "name_vi": "Rau cải", "calories": 25, "protein": 1.3, "fat": 0.1, "carbs": 5.8, "cost_vnd_100g": 1500, "category": "rau_xanh"},
+    ]
+    constraints = NutrientConstraints(daily_calorie_target=1800.0)
+
+    normal_scheduler = MealScheduler({"dietary_restrictions": []}, available_foods=foods, db_url="")
+    normal_context = normal_scheduler._build_domain_context(foods, constraints, {})
+    assert 1 in normal_context["lunch_ids"]
+    assert 2 not in normal_context["lunch_ids"]
+
+    vegetarian_scheduler = MealScheduler({"dietary_restrictions": ["vegetarian"]}, available_foods=foods, db_url="")
+    vegetarian_context = vegetarian_scheduler._build_domain_context(foods, constraints, {})
+    assert 2 in vegetarian_context["lunch_ids"]
+    assert 2 in vegetarian_context["dinner_ids"]
+
+
+def test_plant_based_repeat_limits_for_tofu_and_quail_eggs():
+    foods = [
+        {"food_id": 1, "canonical_name_en": "Grilled tofu", "name_vi": "Đậu phụ nướng", "calories": 120, "protein": 12, "fat": 7, "carbs": 2, "cost_vnd_100g": 6000, "category": "hạt_các_loại"},
+        {"food_id": 2, "canonical_name_en": "Quail egg", "name_vi": "Trứng chim cút luộc", "calories": 158, "protein": 13, "fat": 11, "carbs": 1, "cost_vnd_100g": 9000, "category": "trứng"},
+        {"food_id": 3, "canonical_name_en": "Chicken egg", "name_vi": "Trứng gà ta", "calories": 155, "protein": 13, "fat": 11, "carbs": 1, "cost_vnd_100g": 6000, "category": "trứng"},
+    ]
+    scheduler = MealScheduler(
+        {"daily_calorie_target": 2300, "dietary_restrictions": ["vegetarian"], "plant_protein_as_core": True},
+        available_foods=foods,
+        db_url="",
+    )
+    constraints = NutrientConstraints(daily_calorie_target=2300.0)
+
+    assert scheduler._max_occurrences_for_food(1, constraints, plant_restricted=True) == 4
+    assert scheduler._max_occurrences_for_food(2, constraints, plant_restricted=True) == 1
+    assert scheduler._max_occurrences_for_food(3, constraints, plant_restricted=True) == 2
+    assert scheduler._food_prune_score(foods[1], "protein", constraints, {}, {}) > scheduler._food_prune_score(foods[2], "protein", constraints, {}, {})
+
+
+def test_high_calorie_vegan_plan_remains_feasible_with_limited_plant_proteins():
+    random.seed(42)
+    foods = [
+        {"food_id": 1, "canonical_name_en": "White Rice", "name_vi": "cơm trắng", "calories": 130, "protein": 2.7, "fat": 0.3, "carbs": 28, "cost_vnd_100g": 1800, "category": "tinh_bột"},
+        {"food_id": 2, "canonical_name_en": "Bread", "name_vi": "bánh mì", "calories": 265, "protein": 9, "fat": 3.2, "carbs": 49, "cost_vnd_100g": 5000, "category": "tinh_bột"},
+        {"food_id": 3, "canonical_name_en": "Oats", "name_vi": "yến mạch", "calories": 389, "protein": 16.9, "fat": 6.9, "carbs": 66.3, "cost_vnd_100g": 10000, "category": "tinh_bột"},
+        {"food_id": 4, "canonical_name_en": "Tofu", "name_vi": "đậu phụ luộc", "calories": 76, "protein": 8, "fat": 4.8, "carbs": 1.9, "cost_vnd_100g": 5000, "category": "hạt_các_loại"},
+        {"food_id": 5, "canonical_name_en": "Soybean", "name_vi": "đậu nành luộc", "calories": 173, "protein": 16.6, "fat": 9, "carbs": 9.9, "cost_vnd_100g": 6000, "category": "hạt_các_loại"},
+        {"food_id": 6, "canonical_name_en": "Tempeh", "name_vi": "tempeh", "calories": 193, "protein": 19, "fat": 11, "carbs": 9, "cost_vnd_100g": 12000, "category": "hạt_các_loại"},
+        {"food_id": 7, "canonical_name_en": "Spinach", "name_vi": "rau bó xôi", "calories": 23, "protein": 2.9, "fat": 0.4, "carbs": 3.6, "cost_vnd_100g": 4000, "category": "rau_xanh"},
+        {"food_id": 8, "canonical_name_en": "Broccoli", "name_vi": "súp lơ xanh", "calories": 34, "protein": 2.8, "fat": 0.4, "carbs": 7, "cost_vnd_100g": 5000, "category": "rau_xanh"},
+        {"food_id": 9, "canonical_name_en": "Banana", "name_vi": "chuối", "calories": 89, "protein": 1.1, "fat": 0.3, "carbs": 22.8, "cost_vnd_100g": 2000, "category": "trái_cây"},
+        {"food_id": 10, "canonical_name_en": "Dried jackfruit", "name_vi": "mít khô", "calories": 280, "protein": 2, "fat": 1, "carbs": 70, "cost_vnd_100g": 35000, "category": "đồ_ăn_vặt"},
+    ]
+    user = {
+        "daily_calorie_target": 2300,
+        "macro_ratios": {"protein": 0.22, "fat": 0.28, "carbs": 0.50},
+        "budget_vnd_max": 200000,
+        "exclude_snacks": True,
+        "dietary_restrictions": ["vegan"],
+        "plant_protein_as_core": True,
+        "csp_time_budget_seconds": 7,
+        "calorie_tolerance_pct": 0.18,
+        "macro_tolerance_pct": 0.22,
+        "diversity_penalty_weight": 0.35,
+    }
+
+    scheduler = MealScheduler(user, available_foods=foods, db_url="")
+    result = scheduler.solve_with_relaxation(max_attempts=4)
+
+    assert result["feasible"] is True
+    assert len(result["meal_plan"]) == 7
+    assert all(any(meal["meal_type"] == "snack" for meal in day["meals"]) for day in result["meal_plan"])
 
 
 def test_che_exclusion_and_suffix_stripping():

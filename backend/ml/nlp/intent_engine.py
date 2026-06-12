@@ -303,6 +303,10 @@ class IntentEngine:
             entities["calories"] = int(calories_match.group(1))
             entities["profile_updates"]["daily_calorie_target"] = int(calories_match.group(1))
 
+        activity_level = self._parse_activity_level(query)
+        if activity_level is not None:
+            entities["profile_updates"]["physical_activity_level"] = activity_level
+
         weight_match = re.search(r"(giảm|giam|tang|tăng)\s*(\d+(?:[\.,]\d+)?)\s*(?:kg|cân|can|ky|kí)?\b", query)
         if weight_match:
             weight_value = float(weight_match.group(2).replace(",", "."))
@@ -482,7 +486,44 @@ class IntentEngine:
         if calories_match:
             profile_updates["daily_calorie_target"] = int(calories_match.group(1))
 
+        activity_level = self._parse_activity_level(query)
+        if activity_level is not None:
+            profile_updates["physical_activity_level"] = activity_level
+
         return profile_updates
+
+    def _parse_activity_level(self, query: str) -> str | None:
+        """Parse coarse activity level from natural Vietnamese/English text."""
+        q = query.lower()
+        compact = re.sub(r"\s+", " ", q)
+
+        very_active_markers = [
+            "vận động nặng", "vận dộng nặng", "van dong nang",
+            "hoạt động nặng", "hoat dong nang", "tập nặng", "tap nang",
+            "rất năng động", "rat nang dong", "very active",
+            "cường độ cao", "cuong do cao",
+        ]
+        moderate_markers = [
+            "vận động vừa", "van dong vua", "hoạt động vừa", "hoat dong vua",
+            "moderately active", "tập vừa", "tap vua",
+        ]
+        light_markers = [
+            "vận động nhẹ", "van dong nhe", "hoạt động nhẹ", "hoat dong nhe",
+            "lightly active", "tập nhẹ", "tap nhe",
+        ]
+        sedentary_markers = [
+            "ít vận động", "it van dong", "sedentary", "ngồi nhiều", "ngoi nhieu",
+        ]
+
+        if any(marker in compact for marker in very_active_markers):
+            return "Very Active"
+        if any(marker in compact for marker in moderate_markers):
+            return "Moderately Active"
+        if any(marker in compact for marker in light_markers):
+            return "Lightly Active"
+        if any(marker in compact for marker in sedentary_markers):
+            return "Sedentary"
+        return None
 
     def _parse_nutrients(self, query: str) -> list[str]:
         nutrients: list[str] = []
@@ -833,6 +874,36 @@ class IntentEngine:
             return normalized_value
         return None
 
+    def _merge_fresh_entities(self, cached_or_model_entities: dict[str, Any], fresh_entities: dict[str, Any]) -> dict[str, Any]:
+        """Refresh deterministic entities so stale cache cannot keep old parsing bugs."""
+        merged = self._default_entities()
+        merged.update(cached_or_model_entities or {})
+
+        for key in ("budget_vnd", "calories", "weight_change_kg", "duration_days", "replacement_target"):
+            if fresh_entities.get(key) is not None:
+                merged[key] = fresh_entities[key]
+
+        if fresh_entities.get("health_goal") and fresh_entities.get("health_goal") != "unknown":
+            merged["health_goal"] = fresh_entities["health_goal"]
+        if fresh_entities.get("query_keyword") is not None:
+            merged["query_keyword"] = fresh_entities["query_keyword"]
+
+        for key in ("allergies", "dietary_restrictions", "food_items", "nutrients"):
+            if fresh_entities.get(key):
+                merged[key] = list(dict.fromkeys(fresh_entities[key]))
+
+        merged_profile = self._default_profile_updates()
+        current_profile = merged.get("profile_updates") or {}
+        if isinstance(current_profile, dict):
+            merged_profile.update(current_profile)
+        fresh_profile = fresh_entities.get("profile_updates") or {}
+        if isinstance(fresh_profile, dict):
+            for key, value in fresh_profile.items():
+                if value is not None:
+                    merged_profile[key] = value
+        merged["profile_updates"] = merged_profile
+        return merged
+
     def _result_from_payload(self, payload: dict[str, Any]) -> NLPResult:
         return self._normalize_result(payload, source=str(payload.get("source", "cache")), raw_response=payload.get("raw_response"))
 
@@ -861,6 +932,7 @@ class IntentEngine:
             "weight_kg": None,
             "weight_goal": None,
             "daily_calorie_target": None,
+            "physical_activity_level": None,
         }
 
     def _default_replacement_target(self) -> dict[str, Any]:
@@ -972,11 +1044,23 @@ class IntentEngine:
         ]
         return any(kw in q for kw in keywords)
 
+    def _is_meal_suggestion_query(self, query: str) -> bool:
+        q = query.lower()
+        suggestion_cues = [
+            "gợi ý", "goi y", "đề xuất", "de xuat", "lên", "len",
+            "lập", "lap", "recommend", "suggest",
+        ]
+        meal_cues = [
+            "thực đơn", "thuc don", "menu", "lịch ăn", "lich an",
+            "bữa ăn", "bua an", "món ăn", "mon an",
+        ]
+        return any(cue in q for cue in suggestion_cues) and any(cue in q for cue in meal_cues)
+
     def predict_chat_intent(self, user_query: str) -> dict[str, Any]:
         """Predict user intent for chat interface, enforcing intent guardrails (Format 2)."""
         nlp_result = self.predict(user_query)
         intent = nlp_result.intent
-        entities = nlp_result.entities or {}
+        entities = self._merge_fresh_entities(nlp_result.entities or {}, self.extract_entities(user_query))
 
         # Check if the query contains any in-scope keywords. If not, reject immediately.
         if not self._has_in_scope_keywords(user_query):
@@ -992,7 +1076,7 @@ class IntentEngine:
             # Determine the matched chat domain
             if is_replacement:
                 chat_intent = "FIND_ALTERNATIVE"
-            elif intent == "recommend_meal":
+            elif intent == "recommend_meal" or self._is_meal_suggestion_query(user_query):
                 chat_intent = "SUGGEST_MEAL"
             elif intent == "ask_nutrition":
                 chat_intent = "QUERY_NUTRITION"

@@ -61,11 +61,22 @@ def get_dynamic_tags(food: Dict[str, Any]) -> Set[str]:
     if has_any(peanut_kws):
         tags.add("allergen_peanut")
 
+    plant_milk_or_butter_kws = [
+        "sữa đậu", "sua dau", "sữa hạt", "sua hat", "sữa đậu nành",
+        "sua dau nanh", "sữa yến mạch", "sua yen mach", "sữa hạnh nhân",
+        "sua hanh nhan", "sữa dừa", "sua dua", "soy milk", "oat milk",
+        "almond milk", "coconut milk", "peanut butter", "bơ đậu phộng",
+        "bo dau phong", "bơ lạc", "bo lac",
+    ]
+    is_plant_milk_or_butter = has_any_name(plant_milk_or_butter_kws)
+
     milk_kws = ["sữa", "milk", "butter", "cheese", "phô mai", "pho mai", "yogurt", "sữa chua", "whey", "lactose", "váng sữa", "sữa đặc"]
     is_milk = has_any(milk_kws)
+    if is_plant_milk_or_butter:
+        is_milk = False
     if not is_milk:
         if "bơ" in name_vi.lower().split() or "butter" in n_en:
-            if not any(k in n_vi for k in ["quả bơ", "bơ sáp", "bơ quả", "bơ tươi"]):
+            if not any(k in n_vi for k in ["quả bơ", "bơ sáp", "bơ quả", "bơ tươi"]) and not is_plant_milk_or_butter:
                 is_milk = True
     if is_milk:
         tags.add("allergen_milk")
@@ -87,7 +98,7 @@ def get_dynamic_tags(food: Dict[str, Any]) -> Set[str]:
         tags.add("allergen_pork")
 
     chicken_kws = ["gà", "chicken"]
-    if has_any(chicken_kws):
+    if has_any(chicken_kws) and not has_any(egg_kws):
         tags.add("allergen_chicken")
 
     duck_kws = ["vịt", "duck"]
@@ -100,6 +111,24 @@ def get_dynamic_tags(food: Dict[str, Any]) -> Set[str]:
     if any(n_cat == _normalize_for_matching(c) for c in protein_cats) or has_any(protein_kws):
         if not has_any_name(starch_sub_kws):  # Mỳ xào thịt không bị đẩy nhầm sang thuần protein
             tags.add("role_protein")
+
+    plant_protein_kws = [
+        "đậu phụ", "dau phu", "tofu", "tàu hũ", "tau hu", "tào phớ",
+        "đậu nành", "dau nanh", "đậu tương", "dau tuong", "soy", "soya", "soybean",
+        "tempeh", "đậu ngự luộc", "dau ngu luoc", "đậu ván luộc", "dau van luoc",
+        "đậu xanh luộc", "dau xanh luoc", "đậu đỏ luộc", "dau do luoc",
+        "đậu đen luộc", "dau den luoc", "đậu hà lan luộc", "dau ha lan luoc",
+        "hạt sen luộc", "hat sen luoc",
+    ]
+    plant_protein_cats = ["đậu", "dau", "hat", "hạt", "hạt các loại", "hat cac loai", "hạt_các_loại"]
+    if not is_plant_milk_or_butter and (
+        has_any(plant_protein_kws) or (
+            any(n_cat == _normalize_for_matching(c) for c in plant_protein_cats)
+            and protein >= 6.0
+            and not has_any_name(["chè", "kẹo", "mứt", "bánh", "kem", "ngọt"])
+        )
+    ):
+        tags.add("role_plant_protein")
 
     carb_cats = ["tinh_bot", "tinh bột"]
     carb_kws = ["rice", "cơm", "oat", "yến mạch", "bread", "bánh mì", "potato", "khoai tây", "cornstarch", "tinh bột", "popcorn", "cakes", "pudding", "ngũ cốc"]
@@ -167,6 +196,13 @@ def violates_dietary_restrictions(food: Dict[str, Any], restrictions: Iterable[s
         tags = get_dynamic_tags(food)
         food["tags"] = tags
 
+    def has_any_keyword(keywords: Iterable[str]) -> bool:
+        padded = f" {haystack} "
+        return any(f" {_normalize_for_matching(kw)} " in padded for kw in keywords)
+
+    egg_keywords = ["trung", "trứng", "egg", "eggs", "yolk", "lòng đỏ", "lòng trắng"]
+    is_egg_food = "allergen_egg" in tags or has_any_keyword(egg_keywords)
+
     meat_or_seafood_tags = {
         "allergen_seafood",
         "allergen_beef",
@@ -177,27 +213,66 @@ def violates_dietary_restrictions(food: Dict[str, Any], restrictions: Iterable[s
     animal_product_tags = meat_or_seafood_tags | {"allergen_egg", "allergen_milk"}
 
     meat_or_seafood_keywords = [
-        "thit", "thịt", "bo", "bò", "heo", "lợn", "lon", "pork", "beef",
-        "ga", "gà", "chicken", "vit", "vịt", "duck", "ca", "cá", "fish",
+        "thit", "thịt", "thịt đỏ", "thịt gia cầm", "thit do", "thit gia cam",
+        "bo", "bò", "heo", "lợn", "lon", "pork", "beef",
+        "chicken", "vit", "vịt", "duck", "ca", "cá", "fish",
         "tom", "tôm", "shrimp", "cua", "crab", "muc", "mực", "hai san",
         "hải sản", "salmon", "tuna", "bacon", "xuc xich", "xúc xích",
-        "lap xuong", "lạp xưởng",
+        "lap xuong", "lạp xưởng", "gio", "giò", "cha lua", "chả lụa",
+        "cha que", "chả quế", "cha ca", "chả cá", "pate", "pa te",
+        "ruoc", "ruốc", "cha bong", "chà bông", "mam tom", "mắm tôm",
+        "nuoc mam", "nước mắm", "mam ca", "mắm cá", "mam nem", "mắm nêm",
+        "tiet", "tiết", "long", "lòng", "noi tang", "nội tạng",
+        "con trung", "côn trùng", "insect", "insects", "grasshopper",
+        "locust", "cricket", "chau chau", "châu chấu", "cao cao",
+        "cào cào", "nhong", "nhộng", "duong dua", "đuông dừa",
+        "chim cut", "chim cút", "cut", "cút", "quail",
     ]
     animal_product_keywords = meat_or_seafood_keywords + [
         "trung", "trứng", "egg", "sua", "sữa", "milk", "cheese", "pho mai",
         "phô mai", "yogurt", "sua chua", "sữa chua", "whey", "butter",
+        "bo sua", "bơ sữa", "mat ong", "mật ong", "honey", "gelatin",
     ]
 
+    plant_milk_or_butter_keywords = [
+        "sua dau", "sữa đậu", "sua hat", "sữa hạt", "sua dau nanh",
+        "sữa đậu nành", "soy milk", "oat milk", "almond milk",
+        "coconut milk", "peanut butter", "bo dau phong", "bơ đậu phộng",
+        "bo lac", "bơ lạc",
+    ]
+    is_plant_milk_or_butter = has_any_keyword(plant_milk_or_butter_keywords)
+
     if "vegan" in restriction_set:
-        return bool(animal_product_tags.intersection(tags)) or any(f" {kw} " in haystack for kw in animal_product_keywords)
+        vegan_tags = set(animal_product_tags)
+        if is_plant_milk_or_butter:
+            vegan_tags.discard("allergen_milk")
+        return bool(vegan_tags.intersection(tags)) or (
+            has_any_keyword(animal_product_keywords) and not is_plant_milk_or_butter
+        )
 
     if "vegetarian" in restriction_set:
-        return bool(meat_or_seafood_tags.intersection(tags)) or any(f" {kw} " in haystack for kw in meat_or_seafood_keywords)
+        return bool(meat_or_seafood_tags.intersection(tags)) or (
+            has_any_keyword(meat_or_seafood_keywords) and not is_egg_food
+        )
 
     if "halal" in restriction_set:
-        pork_keywords = ["heo", "lợn", "lon", "pork", "bacon", "xuc xich", "xúc xích", "lap xuong", "lạp xưởng"]
-        alcohol_keywords = ["ruou", "rượu", "bia", "beer", "wine", "vodka", "cognac", "cocktail", "con", "cồn"]
-        return "allergen_pork" in tags or any(f" {kw} " in haystack for kw in pork_keywords + alcohol_keywords)
+        pork_keywords = [
+            "heo", "lợn", "lon", "pork", "bacon", "ham", "thit nguoi",
+            "thịt nguội", "jambon", "xuc xich", "xúc xích", "lap xuong",
+            "lạp xưởng", "gio lua", "giò lụa", "cha lua", "chả lụa",
+            "cha que", "chả quế", "pate", "pa te", "ruoc", "ruốc",
+            "cha bong", "chà bông", "long lon", "lòng lợn", "long heo",
+            "lòng heo", "tiet", "tiết", "huyet", "huyết", "dồi",
+        ]
+        alcohol_keywords = [
+            "ruou", "rượu", "bia", "beer", "wine", "vodka", "cognac",
+            "cocktail", "con", "cồn",
+        ]
+        return (
+            "allergen_pork" in tags
+            or "is_blood" in tags
+            or has_any_keyword(pork_keywords + alcohol_keywords)
+        )
 
     return False
 
@@ -274,11 +349,34 @@ def classify_food(f: Dict[str, Any]) -> str:
     is_raw = any(kw in name_vi for kw in ['sống', 'raw', 'chưa chế biến', 'gạo tẻ', 'gạo nếp'])
     has_cooking = any(kw in name_vi for kw in ['luộc', 'nướng', 'hấp', 'chín', 'hầm', 'chần', 'xào', 'rán', 'kho'])
     if is_raw and not has_cooking:
-        if "role_carb" in tags or not ("role_protein" in tags or "clean_protein" in tags or is_clean_protein_gym(f)):
+        if "role_carb" in tags or not ("role_protein" in tags or "role_plant_protein" in tags or "clean_protein" in tags or is_clean_protein_gym(f)):
             is_accessory = True
 
     if is_accessory:
         return "ACCESSORY_CONDIMENT"
+
+    plant_protein_keywords = [
+        'đậu phụ', 'dau phu', 'tofu', 'tàu hũ', 'tau hu', 'đậu nành', 'dau nanh',
+        'đậu tương', 'dau tuong', 'soy', 'soya', 'soybean', 'tempeh', 'đậu ngự luộc',
+        'đậu ván luộc', 'đậu xanh luộc', 'đậu đỏ luộc', 'đậu đen luộc',
+        'đậu hà lan luộc', 'hạt sen luộc', 'sữa đậu nành'
+    ]
+    plant_protein_categories = ['đậu', 'dau', 'hat', 'hạt', 'hạt các loại', 'hạt_các_loại']
+    is_plant_spread_or_milk = any(kw in name_vi for kw in ['sữa', 'bơ']) or any(kw in name_en for kw in ['milk', 'butter'])
+    is_plant_protein = (
+        not is_plant_spread_or_milk
+        and (
+            any(kw in name_vi or kw in name_en for kw in plant_protein_keywords)
+            or (
+                any(check_category(category, cat) or cat in clean_category(category) for cat in plant_protein_categories)
+                and float(f.get("protein_g") or f.get("protein") or 0.0) >= 6.0
+                and not any(kw in name_vi for kw in ['chè', 'kẹo', 'mứt', 'bánh', 'kem', 'ngọt'])
+            )
+        )
+    )
+
+    if is_plant_protein:
+        return "PLANT_PROTEIN"
 
     # 1. NHÓM TINH BỘT CHÍN
     keywords_carb = ['cơm', 'bún, tươi', 'bánh phở', 'nui, luộc', 'xôi', 'bánh mì', 'bánh mỳ', 'bánh cuốn', 'mỳ sợi', 'bánh khúc', 'bánh giò', 'bánh chưng', 'bánh đúc', 'bánh tẻ', 'mỳ ăn liền']
@@ -361,32 +459,41 @@ def clean_category(c: Any) -> str:
     return ''.join([ch for ch in nfkd_form if not unicodedata.combining(ch)]).replace('đ', 'd')
 
 
-def get_max_serving_g(food: Dict[str, Any], is_gym: bool = False) -> float:
+def get_max_serving_g(food: Dict[str, Any], is_gym: bool = False, daily_calorie_target: float | None = None) -> float:
     tags = food.get("tags") or set()
     if not tags:
         tags = get_dynamic_tags(food)
         food["tags"] = tags
     role = classify_food(food)
+    target = float(daily_calorie_target or 0.0)
+    is_high_calorie = target >= 2400.0
+    is_very_high_calorie = target >= 3000.0
     
     if "is_dried" in tags or "is_powder" in tags:
-        return 30.0
+        return 50.0 if is_very_high_calorie else 40.0 if is_high_calorie else 30.0
     if "is_cheese_butter" in tags or "is_condensed_milk" in tags:
-        return 50.0
+        return 70.0 if is_high_calorie else 50.0
     if "is_blood" in tags:
         return 150.0
     if "is_processed" in tags or "is_dessert_snack" in tags:
-        return 150.0
+        return 200.0 if is_very_high_calorie else 180.0 if is_high_calorie else 150.0
     if role == "FIBER_SIDE":
-        return 250.0
+        return 320.0 if is_high_calorie else 250.0
     if role == "STAPLE_CARB":
-        return 300.0
-    if role == "MAIN_PROTEIN":
+        if is_very_high_calorie:
+            return 450.0
+        return 380.0 if is_high_calorie else 300.0
+    if role in ["MAIN_PROTEIN", "PLANT_PROTEIN"]:
+        if is_very_high_calorie:
+            return 550.0 if is_gym else 480.0
+        if is_high_calorie:
+            return 500.0 if is_gym else 420.0
         return 450.0 if is_gym else 350.0
     
     cat_clean = clean_category(food.get("category"))
     if cat_clean == "trai_cay":
-        return 300.0
-    return 300.0
+        return 380.0 if is_high_calorie else 300.0
+    return 380.0 if is_high_calorie else 300.0
 
 
 def is_high_quality_protein(food: Dict[str, Any]) -> bool:
@@ -407,4 +514,4 @@ def is_standalone_main_dish(f: Dict[str, Any]) -> bool:
 
 def get_food_role(f: Dict[str, Any]) -> tuple[bool, bool, bool]:
     role = classify_food(f)
-    return role == "MAIN_PROTEIN", role == "STAPLE_CARB", role == "FIBER_SIDE"
+    return role in ["MAIN_PROTEIN", "PLANT_PROTEIN"], role == "STAPLE_CARB", role == "FIBER_SIDE"

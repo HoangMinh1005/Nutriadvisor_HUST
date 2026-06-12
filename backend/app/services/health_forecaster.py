@@ -33,6 +33,113 @@ class HealthForecaster:
         self.activity_mapping = self.model_data["activity_mapping"]
         self.sleep_mapping = self.model_data["sleep_mapping"]
 
+    def _predict_change_kg(self, input_dict: Dict[str, float]) -> float:
+        feature_vector = [input_dict[feat] for feat in self.features]
+        df_features = pd.DataFrame([feature_vector], columns=self.features)
+        predicted_change_lbs = float(self.model.predict(df_features)[0])
+        return predicted_change_lbs / 2.20462
+
+    def _global_feature_importance(self) -> Dict[str, float]:
+        if not hasattr(self.model, "feature_importances_"):
+            return {}
+
+        telemetry_mapping = {
+            "Stress Level": "Stress Level",
+            "Daily Caloric Surplus/Deficit": "Caloric Surplus/Deficit",
+            "Sleep_encoded": "Sleep Quality",
+            "Activity_encoded": "Physical Activity Level",
+            "Daily Calories Consumed": "Calories Consumed",
+            "Duration (weeks)": "Duration",
+            "Gender_encoded": "Gender"
+        }
+        feature_importance = {}
+        for feat, imp in zip(self.features, self.model.feature_importances_):
+            telemetry_key = telemetry_mapping.get(feat, feat)
+            feature_importance[telemetry_key] = round(float(imp), 4)
+        return feature_importance
+
+    def _personalized_feature_importance(
+        self,
+        calories: float,
+        surplus: float,
+        gender_encoded: float,
+        activity: str,
+        activity_encoded: float,
+        sleep: str,
+        sleep_encoded: float,
+        stress: float,
+    ) -> Dict[str, float]:
+        """Estimate local, profile-specific impact by perturbing one factor at a time."""
+        base_input = {
+            "Daily Calories Consumed": calories,
+            "Daily Caloric Surplus/Deficit": surplus,
+            "Duration (weeks)": 4.0,
+            "Gender_encoded": float(gender_encoded),
+            "Activity_encoded": float(activity_encoded),
+            "Sleep_encoded": float(sleep_encoded),
+            "Stress Level": float(stress)
+        }
+
+        def predict_with(changes: Dict[str, float]) -> float:
+            candidate = base_input.copy()
+            candidate.update({k: v for k, v in changes.items() if k in candidate})
+            return self._predict_change_kg(candidate)
+
+        base_change = self._predict_change_kg(base_input)
+
+        calorie_step = 300.0
+        calories_plus = predict_with({
+            "Daily Calories Consumed": calories + calorie_step,
+            "Daily Caloric Surplus/Deficit": surplus + calorie_step,
+        })
+        calories_minus = predict_with({
+            "Daily Calories Consumed": max(800.0, calories - calorie_step),
+            "Daily Caloric Surplus/Deficit": surplus - calorie_step,
+        })
+        model_calorie_impact = (abs(calories_plus - base_change) + abs(calories_minus - base_change)) / 2.0
+        energy_balance_impact = (calorie_step * 7.0 * 4.0) / 7700.0
+
+        stress_plus = predict_with({"Stress Level": min(10.0, stress + 2.0)})
+        stress_minus = predict_with({"Stress Level": max(1.0, stress - 2.0)})
+        stress_impact = (abs(stress_plus - base_change) + abs(stress_minus - base_change)) / 2.0
+
+        sleep_impact = 0.0
+        for value in self.sleep_mapping.values():
+            value = float(value)
+            if value != float(sleep_encoded):
+                sleep_impact = max(sleep_impact, abs(predict_with({"Sleep_encoded": value}) - base_change))
+
+        activity_impact = 0.0
+        for value in self.activity_mapping.values():
+            value = float(value)
+            if value != float(activity_encoded):
+                activity_impact = max(activity_impact, abs(predict_with({"Activity_encoded": value}) - base_change))
+
+        sleep_penalty = {
+            "Poor": 1.25,
+            "Fair": 1.05,
+            "Good": 0.85,
+            "Excellent": 0.70,
+        }.get(str(sleep), 1.0)
+        activity_penalty = {
+            "Sedentary": 1.25,
+            "Lightly Active": 1.05,
+            "Moderately Active": 0.85,
+            "Very Active": 0.70,
+        }.get(str(activity), 1.0)
+
+        raw_scores = {
+            "Caloric Surplus/Deficit": max(model_calorie_impact, energy_balance_impact) * (1.0 + min(abs(surplus) / 800.0, 1.0)),
+            "Stress Level": max(stress_impact, 0.01) * (0.5 + min(max(stress, 1.0), 10.0) / 10.0),
+            "Sleep Quality": max(sleep_impact, 0.01) * sleep_penalty,
+            "Physical Activity Level": max(activity_impact, 0.01) * activity_penalty,
+        }
+
+        total = sum(raw_scores.values())
+        if total <= 0:
+            return self._global_feature_importance()
+        return {key: round(value / total, 4) for key, value in raw_scores.items()}
+
     def predict_weekly_trend(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Generate a 5-week trajectory forecast (W0 to W4) for weight and BMI."""
         weight_kg = float(data["current_weight_kg"])
@@ -81,17 +188,7 @@ class HealthForecaster:
                 "Stress Level": float(stress)
             }
 
-            # Align feature vector order with training features list
-            feature_vector = [input_dict[feat] for feat in self.features]
-
-            # Construct DataFrame with matching column names to suppress user warnings
-            df_features = pd.DataFrame([feature_vector], columns=self.features)
-
-            # Model predicts weight change in lbs
-            predicted_change_lbs = float(self.model.predict(df_features)[0])
-
-            # Convert change to kg and calculate cumulative weight & BMI
-            predicted_change_kg = predicted_change_lbs / 2.20462
+            predicted_change_kg = self._predict_change_kg(input_dict)
 
             # Keep the displayed trajectory consistent with the user's calorie balance.
             # The RF model can occasionally return an opposite-signed change for sparse
@@ -116,22 +213,16 @@ class HealthForecaster:
                 "predicted_bmi": round(predicted_bmi, 2)
             })
 
-        # Process feature importance mapping
-        feature_importance = {}
-        if hasattr(self.model, "feature_importances_"):
-            importances = self.model.feature_importances_
-            telemetry_mapping = {
-                "Stress Level": "Stress Level",
-                "Daily Caloric Surplus/Deficit": "Caloric Surplus/Deficit",
-                "Sleep_encoded": "Sleep Quality",
-                "Activity_encoded": "Physical Activity Level",
-                "Daily Calories Consumed": "Calories Consumed",
-                "Duration (weeks)": "Duration",
-                "Gender_encoded": "Gender"
-            }
-            for feat, imp in zip(self.features, importances):
-                telemetry_key = telemetry_mapping.get(feat, feat)
-                feature_importance[telemetry_key] = round(float(imp), 4)
+        feature_importance = self._personalized_feature_importance(
+            calories=calories,
+            surplus=surplus,
+            gender_encoded=float(gender_encoded),
+            activity=activity,
+            activity_encoded=float(activity_encoded),
+            sleep=sleep,
+            sleep_encoded=float(sleep_encoded),
+            stress=stress,
+        )
 
         return {
             "status": "success",
@@ -139,5 +230,6 @@ class HealthForecaster:
             "weight_unit": "kg",
             "daily_caloric_surplus": round(surplus, 2),
             "forecast_chart_data": forecast_chart_data,
-            "feature_importance": feature_importance
+            "feature_importance": feature_importance,
+            "feature_importance_global": self._global_feature_importance()
         }

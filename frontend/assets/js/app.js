@@ -6,6 +6,7 @@ let mealPlan = [];
 let knnInlineActive = false;
 let weightForecastChart = null;
 let featureImportanceChart = null;
+let initialEditDietaryMode = "";
 
 const MEAL_SLOT_ORDER = {
     breakfast: 1,
@@ -139,6 +140,7 @@ onboardingForm.addEventListener("submit", async (e) => {
         sleep_quality: mapSliderToSleep(parseInt(sleepSlider.value)),
         stress_level: parseInt(stressSlider.value) * 2, // Map scale 1-5 to 1-10
         allergies: parseAllergies(document.getElementById("ob-allergies").value),
+        dietary_restrictions: getDietaryRestrictions("ob-dietary-mode"),
         weight_goal: "maintain"
     };
     
@@ -157,7 +159,13 @@ onboardingForm.addEventListener("submit", async (e) => {
             loadDashboardData(data);
             switchScreen("dashboard");
             showLoading(false);
-            await regenerateMealPlanIfNeeded(data.meal_plan_stale);
+            await regenerateMealPlanIfNeeded(
+                data.meal_plan_stale || data.dietary_restrictions_changed,
+                {
+                    force: Boolean(data.dietary_restrictions_changed),
+                    userProfile: data.profile
+                }
+            );
         }
     } catch (err) {
         alert("Khởi tạo chỉ số sinh lý thất bại: " + err.message);
@@ -218,6 +226,37 @@ function parseAllergies(value) {
 
 function formatAllergies(allergies) {
     return Array.isArray(allergies) ? allergies.join(", ") : "";
+}
+
+function getDietaryRestrictions(selectId) {
+    const value = document.getElementById(selectId)?.value;
+    return value ? [value] : [];
+}
+
+function getDietaryModeValue(restrictions) {
+    if (Array.isArray(restrictions)) {
+        return restrictions[0] || "";
+    }
+    if (typeof restrictions === "string") {
+        return restrictions.replace(/[{}"]/g, "").split(",")[0]?.trim() || "";
+    }
+    return "";
+}
+
+function normalizeStringList(items) {
+    const list = Array.isArray(items)
+        ? items
+        : (typeof items === "string" ? items.replace(/[{}"]/g, "").split(",") : []);
+    return list
+        .map(item => String(item).trim().toLowerCase())
+        .filter(Boolean)
+        .sort();
+}
+
+function sameStringList(a, b) {
+    const left = normalizeStringList(a);
+    const right = normalizeStringList(b);
+    return left.length === right.length && left.every((item, index) => item === right[index]);
 }
 
 function calculateMaintenanceCalories({ weightKg, heightCm, age, gender, activityLevel }) {
@@ -302,14 +341,25 @@ function setPanelLoading(panelId, isLoading) {
     panel.classList.toggle("hidden", !isLoading);
 }
 
-async function regenerateMealPlanIfNeeded(shouldRegenerate) {
+async function regenerateMealPlanIfNeeded(shouldRegenerate, options = {}) {
     if (!shouldRegenerate || !userProfile?.email) return;
     setPanelLoading("meal-plan-loading", true);
+    const profileForRegenerate = options.userProfile || userProfile || {};
     try {
         const res = await fetch("/api/v1/meal-plan/regenerate", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: userProfile.email })
+            body: JSON.stringify({
+                email: userProfile.email,
+                force: Boolean(options.force),
+                user_profile: {
+                    daily_calorie_target: profileForRegenerate.daily_calorie_target,
+                    budget_vnd_max: profileForRegenerate.budget_vnd_max,
+                    physical_activity_level: profileForRegenerate.physical_activity_level,
+                    allergies: profileForRegenerate.allergies || [],
+                    dietary_restrictions: profileForRegenerate.dietary_restrictions || []
+                }
+            })
         });
         const data = await res.json();
         if (data.status === "success") {
@@ -712,9 +762,10 @@ function renderForecastChart(forecast) {
 
 function renderFeatureImportance(importanceMap) {
     const ctx = document.getElementById("featureImportanceChart").getContext("2d");
+    const sourceMap = importanceMap || {};
     
     const factorsMapping = {
-        "daily_calories_consumed": "Thặng dư hoặc Dư thừa Calo",
+        "daily_calories_consumed": "Thặng dư / thâm hụt Calo",
         "stress_level": "Mức độ Căng thẳng",
         "sleep_quality": "Chất lượng Giấc ngủ",
         "physical_activity_level": "Cường độ Vận động"
@@ -725,13 +776,13 @@ function renderFeatureImportance(importanceMap) {
     if (importanceMap) {
         Object.keys(importanceMap).forEach(k => {
             if (k.toLowerCase().includes("surplus") || k.toLowerCase().includes("calor")) {
-                importanceMapNormalized["daily_calories_consumed"] = importanceMap[k];
+                importanceMapNormalized["daily_calories_consumed"] = sourceMap[k];
             } else if (k.toLowerCase().includes("stress")) {
-                importanceMapNormalized["stress_level"] = importanceMap[k];
+                importanceMapNormalized["stress_level"] = sourceMap[k];
             } else if (k.toLowerCase().includes("sleep")) {
-                importanceMapNormalized["sleep_quality"] = importanceMap[k];
+                importanceMapNormalized["sleep_quality"] = sourceMap[k];
             } else if (k.toLowerCase().includes("activ")) {
-                importanceMapNormalized["physical_activity_level"] = importanceMap[k];
+                importanceMapNormalized["physical_activity_level"] = sourceMap[k];
             }
         });
     }
@@ -742,7 +793,7 @@ function renderFeatureImportance(importanceMap) {
     
     Object.keys(factorsMapping).forEach(key => {
         labels.push(factorsMapping[key]);
-        let val = (importanceMapNormalized[key] || importanceMap[key] || 0.1) * 100;
+        let val = (importanceMapNormalized[key] || sourceMap[key] || 0.1) * 100;
         values.push(val);
     });
     
@@ -907,7 +958,9 @@ chatInputForm.addEventListener("submit", async (e) => {
                     gender: userProfile.gender === "male" ? "M" : "F",
                     daily_calorie_target: userProfile.daily_calorie_target,
                     budget_vnd_max: userProfile.budget_vnd_max,
-                    exclude_snacks: true
+                    exclude_snacks: true,
+                    allergies: userProfile.allergies || [],
+                    dietary_restrictions: userProfile.dietary_restrictions || []
                 }
             })
         });
@@ -960,6 +1013,8 @@ document.getElementById("btn-edit-profile").addEventListener("click", () => {
     document.getElementById("edit-calories").value = userProfile.daily_calorie_target;
     document.getElementById("edit-budget").value = userProfile.budget_vnd_max;
     document.getElementById("edit-allergies").value = formatAllergies(userProfile.allergies);
+    document.getElementById("edit-dietary-mode").value = getDietaryModeValue(userProfile.dietary_restrictions);
+    initialEditDietaryMode = document.getElementById("edit-dietary-mode").value || "";
     
     const sleepSliderVal = mapSleepToSlider(userProfile.sleep_quality);
     editSleepSlider.value = sleepSliderVal;
@@ -983,6 +1038,9 @@ function closeModal() {
 profileEditForm.addEventListener("submit", async (e) => {
     e.preventDefault();
     updateMaintenanceCalories("edit");
+    const nextDietaryMode = document.getElementById("edit-dietary-mode").value || "";
+    const nextDietaryRestrictions = getDietaryRestrictions("edit-dietary-mode");
+    const dietaryRestrictionsChanged = initialEditDietaryMode !== nextDietaryMode;
     const editPayload = {
         full_name: document.getElementById("edit-fullname").value.trim(),
         email: userProfile.email,
@@ -996,6 +1054,8 @@ profileEditForm.addEventListener("submit", async (e) => {
         sleep_quality: mapSliderToSleep(parseInt(editSleepSlider.value)),
         stress_level: parseInt(editStressSlider.value) * 2,
         allergies: parseAllergies(document.getElementById("edit-allergies").value),
+        dietary_restrictions: nextDietaryRestrictions,
+        force_meal_plan_refresh: dietaryRestrictionsChanged,
         weight_goal: "maintain"
     };
     
@@ -1016,9 +1076,20 @@ profileEditForm.addEventListener("submit", async (e) => {
             loadDashboardData(data);
             setPanelLoading("forecast-loading", false);
             setPanelLoading("importance-loading", false);
-            await regenerateMealPlanIfNeeded(data.meal_plan_stale);
+            const shouldRegenerateMealPlan = Boolean(
+                data.meal_plan_stale
+                || data.dietary_restrictions_changed
+                || dietaryRestrictionsChanged
+            );
+            await regenerateMealPlanIfNeeded(shouldRegenerateMealPlan, {
+                force: dietaryRestrictionsChanged || Boolean(data.dietary_restrictions_changed),
+                userProfile: {
+                    ...data.profile,
+                    dietary_restrictions: nextDietaryRestrictions
+                }
+            });
             
-            addBotMessage(data.meal_plan_stale
+            addBotMessage(shouldRegenerateMealPlan
                 ? "Đã lưu hồ sơ. Thực đơn đang được cập nhật lại bằng CSP ở khu vực bên trái."
                 : "Đã cập nhật hồ sơ và biểu đồ dự báo. Thực đơn hiện tại vẫn phù hợp nên không cần tạo lại.");
         }

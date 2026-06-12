@@ -13,12 +13,14 @@ class UserSegmentation:
     """
     Segment users into K clusters based on profile features.
     
-    Features used:
-    - Age
-    - BMI (Body Mass Index)
-    - Daily calorie target
-    - Number of allergies
-    - Health goal (encoded: 1=weight_loss, 2=maintenance, 3=muscle_gain)
+    Features used by newly trained models:
+    - Age, BMI, daily calorie target, budget, maintenance calories, surplus
+    - Number of allergies, health goal, activity level, diet type, gender
+    - Ratio between desired calories and maintenance calories
+
+    Cached demo models created before the profile expansion used only the first
+    five legacy features. Prediction keeps that path available so production can
+    load old artifacts until the model is retrained.
     """
     
     SEGMENT_NAMES = [
@@ -34,6 +36,36 @@ class UserSegmentation:
         "maintenance": 2,
         "muscle_gain": 3
     }
+
+    ACTIVITY_MAP = {
+        "sedentary": 1,
+        "lightly active": 2,
+        "moderately active": 3,
+        "very active": 4,
+    }
+
+    DIET_MAP = {
+        "normal": 0,
+        "balanced": 0,
+        "halal": 1,
+        "vegetarian": 2,
+        "vegan": 3,
+    }
+
+    FEATURE_NAMES = [
+        "age",
+        "bmi",
+        "daily_calorie_target",
+        "budget_vnd_max",
+        "maintenance_calories",
+        "daily_caloric_surplus",
+        "num_allergies",
+        "health_goal_encoded",
+        "activity_encoded",
+        "diet_encoded",
+        "gender_encoded",
+        "target_to_maintenance_ratio",
+    ]
     
     def __init__(self, n_clusters: int = 5, cache_dir: str = "data/ml/clustering"):
         """
@@ -50,29 +82,81 @@ class UserSegmentation:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.fitted = False
     
-    def extract_features(self, users: List[UserProfile]) -> np.ndarray:
+    def extract_features(self, users: List[UserProfile], feature_count: int | None = None) -> np.ndarray:
         """
         Extract feature matrix from user profiles.
         
-        Features: [age, BMI, daily_calorie_target, num_allergies, health_goal_encoded]
+        New feature set:
+        [age, BMI, daily_calorie_target, budget_vnd_max, maintenance_calories,
+        daily_caloric_surplus, num_allergies, health_goal_encoded,
+        activity_encoded, diet_encoded, gender_encoded, target_to_maintenance_ratio]
+
+        If feature_count=5, returns the legacy feature set used by the cached
+        demo model:
+        [age, BMI, daily_calorie_target, num_allergies, health_goal_encoded]
         
         Args:
             users: List of UserProfile objects
             
         Returns:
-            Feature matrix of shape (n_users, 5)
+            Feature matrix of shape (n_users, feature_count or 12)
         """
         features = []
         for user in users:
             age = user.age
             bmi = user.bmi
             cal_target = user.daily_calorie_target
+            budget = float(user.budget_vnd_max or 0.0)
+            maintenance = float(user.maintenance_calories or 0.0)
+            surplus = float(user.daily_caloric_surplus or (cal_target - maintenance if maintenance else 0.0))
             num_allergies = len(user.allergies)
             goal_encoded = self.HEALTH_GOAL_MAP.get(user.health_goal, 2)
-            
-            features.append([age, bmi, cal_target, num_allergies, goal_encoded])
+
+            activity = str(user.physical_activity_level or "").strip().lower()
+            activity_encoded = self.ACTIVITY_MAP.get(activity, 3)
+
+            restrictions = {
+                str(r).strip().lower()
+                for r in (user.dietary_restrictions or [])
+                if str(r).strip()
+            }
+            if "vegan" in restrictions:
+                diet_key = "vegan"
+            elif "vegetarian" in restrictions:
+                diet_key = "vegetarian"
+            elif "halal" in restrictions:
+                diet_key = "halal"
+            else:
+                diet_key = "normal"
+            diet_encoded = self.DIET_MAP[diet_key]
+
+            gender = str(user.gender or "").strip().lower()
+            gender_encoded = 1 if gender in {"m", "male", "nam"} else 0
+            target_to_maintenance = cal_target / maintenance if maintenance > 0 else 1.0
+
+            if feature_count == 5:
+                features.append([age, bmi, cal_target, num_allergies, goal_encoded])
+            else:
+                features.append([
+                    age,
+                    bmi,
+                    cal_target,
+                    budget,
+                    maintenance,
+                    surplus,
+                    num_allergies,
+                    goal_encoded,
+                    activity_encoded,
+                    diet_encoded,
+                    gender_encoded,
+                    target_to_maintenance,
+                ])
         
         return np.array(features, dtype=np.float32)
+
+    def _expected_feature_count(self) -> int | None:
+        """Return the fitted scaler feature count when available."""
+        return getattr(self.scaler, "n_features_in_", None)
     
     def fit(self, users: List[UserProfile]) -> Dict:
         """
@@ -119,7 +203,7 @@ class UserSegmentation:
         if not self.fitted:
             raise ValueError("Model not fitted. Call fit() first.")
         
-        X = self.extract_features([user])
+        X = self.extract_features([user], feature_count=self._expected_feature_count())
         X_scaled = self.scaler.transform(X)
         
         cluster_id = int(self.kmeans.predict(X_scaled)[0])
@@ -148,7 +232,7 @@ class UserSegmentation:
         if not self.fitted:
             raise ValueError("Model not fitted. Call fit() first.")
         
-        X = self.extract_features(users)
+        X = self.extract_features(users, feature_count=self._expected_feature_count())
         X_scaled = self.scaler.transform(X)
         
         cluster_ids = self.kmeans.predict(X_scaled)
