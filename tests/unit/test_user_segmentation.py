@@ -6,7 +6,9 @@ from backend.ml.clustering import (
     ClusterAssignment,
     UserSegmentation,
     get_segment_names,
-    MENU_TEMPLATES
+    MENU_TEMPLATES,
+    get_segment_policy,
+    apply_segment_policy_to_csp_profile,
 )
 
 
@@ -22,11 +24,17 @@ class TestUserProfile:
             height_cm=170,
             daily_calorie_target=2000,
             health_goal="maintenance",
-            allergies=["peanut"]
+            allergies=["peanut"],
+            dietary_restrictions=["vegetarian"],
+            physical_activity_level="Moderately Active",
+            budget_vnd_max=80000,
+            maintenance_calories=2200,
+            daily_caloric_surplus=-200,
         )
         assert user.user_id == 1
         assert user.age == 30
         assert len(user.allergies) == 1
+        assert user.dietary_restrictions == ["vegetarian"]
     
     def test_bmi_calculation(self):
         """Test BMI calculation from weight and height."""
@@ -85,7 +93,7 @@ class TestUserSegmentation:
         """Test feature extraction produces correct shape."""
         seg = UserSegmentation()
         features = seg.extract_features(sample_users)
-        assert features.shape == (5, 5)  # 5 users, 5 features
+        assert features.shape == (5, 12)  # 5 users, expanded profile features
         assert features.dtype == np.float32
     
     def test_extract_features_values(self):
@@ -93,17 +101,48 @@ class TestUserSegmentation:
         user = UserProfile(
             user_id=1, age=30, weight_kg=70, height_cm=170,
             daily_calorie_target=2000, health_goal="maintenance",
-            allergies=["peanut", "shellfish"]
+            allergies=["peanut", "shellfish"],
+            gender="M",
+            physical_activity_level="Very Active",
+            dietary_restrictions=["vegan"],
+            budget_vnd_max=90000,
+            maintenance_calories=2500,
+            daily_caloric_surplus=-500,
         )
         seg = UserSegmentation()
         features = seg.extract_features([user])
         
-        # Check features: [age, BMI, cal_target, num_allergies, goal_encoded]
+        # Check expanded features.
         assert features[0, 0] == 30  # age
         assert abs(features[0, 1] - 24.22) < 0.1  # BMI
         assert features[0, 2] == 2000  # calorie_target
-        assert features[0, 3] == 2  # num_allergies
-        assert features[0, 4] == 2  # maintenance goal encoded
+        assert features[0, 3] == 90000  # budget
+        assert features[0, 4] == 2500  # maintenance calories
+        assert features[0, 5] == -500  # daily surplus
+        assert features[0, 6] == 2  # num_allergies
+        assert features[0, 7] == 2  # maintenance goal encoded
+        assert features[0, 8] == 4  # very active
+        assert features[0, 9] == 3  # vegan
+        assert features[0, 10] == 1  # male
+        assert abs(features[0, 11] - 0.8) < 0.01
+
+    def test_extract_legacy_features_for_cached_models(self):
+        """Old cached demo models still receive the original 5-feature shape."""
+        user = UserProfile(
+            user_id=1, age=30, weight_kg=70, height_cm=170,
+            daily_calorie_target=2000, health_goal="maintenance",
+            allergies=["peanut", "shellfish"],
+            dietary_restrictions=["vegan"],
+        )
+        seg = UserSegmentation()
+        features = seg.extract_features([user], feature_count=5)
+
+        assert features.shape == (1, 5)
+        assert features[0, 0] == 30
+        assert abs(features[0, 1] - 24.22) < 0.1
+        assert features[0, 2] == 2000
+        assert features[0, 3] == 2
+        assert features[0, 4] == 2
     
     def test_fit_model(self, sample_users):
         """Test model fitting."""
@@ -198,9 +237,9 @@ class TestUserSegmentation:
         features_maint = seg.extract_features([user_maint])
         features_gain = seg.extract_features([user_gain])
         
-        assert features_loss[0, 4] == 1
-        assert features_maint[0, 4] == 2
-        assert features_gain[0, 4] == 3
+        assert features_loss[0, 7] == 1
+        assert features_maint[0, 7] == 2
+        assert features_gain[0, 7] == 3
     
     def test_cache_and_load_model(self, sample_users, tmp_path):
         """Test caching and loading model."""
@@ -289,3 +328,52 @@ class TestMenuTemplates:
                     template["carbs_target_ratio"] +
                     template["fat_target_ratio"])
             assert abs(total - 1.0) < 0.01  # Allow small floating point error
+
+
+class TestSegmentPolicies:
+    """Test KMeans segment policies passed to CSP."""
+
+    def test_plant_based_active_policy_relaxes_diversity_and_enables_snacks(self):
+        user = UserProfile(
+            user_id=1,
+            age=25,
+            weight_kg=65,
+            height_cm=170,
+            daily_calorie_target=1800,
+            health_goal="weight_loss",
+            physical_activity_level="Moderately Active",
+            dietary_restrictions=["vegan"],
+            maintenance_calories=2300,
+            daily_caloric_surplus=-500,
+        )
+
+        policy = get_segment_policy("balanced_lifestyle", user)
+
+        assert policy["plant_protein_as_core"] is True
+        assert policy["enable_snack_from_kcal"] == 1600.0
+        assert policy["diversity_penalty_weight"] <= 0.45
+        assert policy["macro_stability_weight"] >= 1.3
+
+    def test_apply_segment_policy_to_csp_profile(self):
+        user = UserProfile(
+            user_id=1,
+            age=30,
+            weight_kg=70,
+            height_cm=170,
+            daily_calorie_target=2800,
+            health_goal="muscle_gain",
+        )
+        policy = get_segment_policy("performance_athlete", user)
+        csp_profile = {
+            "daily_calorie_target": 2800,
+            "budget_vnd_max": 150000,
+            "macro_ratios": {"protein": 0.35, "fat": 0.20, "carbs": 0.45},
+            "exclude_snacks": True,
+        }
+
+        tuned = apply_segment_policy_to_csp_profile(csp_profile, policy)
+
+        assert tuned["segment_name"] == "performance_athlete"
+        assert tuned["policy_name"] == "high_calorie_distribution"
+        assert tuned["enable_snack_from_kcal"] == 2200.0
+        assert tuned["csp_time_budget_seconds"] >= 4.0

@@ -13,6 +13,12 @@ class UserProfile:
     daily_calorie_target: float
     health_goal: str  # "weight_loss", "maintenance", "muscle_gain"
     allergies: List[str] = field(default_factory=list)
+    gender: str = "M"
+    physical_activity_level: str = "Moderately Active"
+    dietary_restrictions: List[str] = field(default_factory=list)
+    budget_vnd_max: float = 100000.0
+    maintenance_calories: float = 0.0
+    daily_caloric_surplus: float = 0.0
     
     @property
     def bmi(self) -> float:

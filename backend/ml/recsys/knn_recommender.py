@@ -142,7 +142,19 @@ class KNNFoodRecommender:
                 filtered_indices.append(idx)
 
         # 4. Stratified selection
-        exclude_snacks = user_profile.get("exclude_snacks", False)
+        dietary_restrictions = {
+            str(r).strip().lower()
+            for r in (user_profile.get("dietary_restrictions") or [])
+            if str(r).strip()
+        }
+        snack_threshold = float(user_profile.get("enable_snack_from_kcal") or 2400.0)
+        exclude_snacks = bool(user_profile.get("exclude_snacks", False))
+        if daily_cal >= 1600.0 and {"vegetarian", "vegan"}.intersection(dietary_restrictions):
+            exclude_snacks = False
+        elif daily_cal >= 2200.0 and dietary_restrictions:
+            exclude_snacks = False
+        elif daily_cal >= snack_threshold:
+            exclude_snacks = False
 
         def is_snack_food(f: dict[str, Any]) -> bool:
             tags = f.get("tags") or set()

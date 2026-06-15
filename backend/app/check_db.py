@@ -60,6 +60,7 @@ class DatabaseChecker:
                     self.cursor.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS physical_activity_level VARCHAR(50) DEFAULT 'Moderately Active';")
                     self.cursor.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS sleep_quality VARCHAR(20) DEFAULT 'Good';")
                     self.cursor.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS stress_level INTEGER DEFAULT 5;")
+                    self.cursor.execute("ALTER TABLE user_profiles ADD COLUMN IF NOT EXISTS dietary_restrictions TEXT[] DEFAULT '{}';")
                     self.connection.commit()
                     print("  ✅ Automatically verified and updated user_profiles schema columns")
                 except Exception as migrate_exc:

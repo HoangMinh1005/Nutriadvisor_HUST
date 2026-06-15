@@ -143,6 +143,15 @@
                         <label for="ob-allergies">Dị ứng thực phẩm</label>
                         <input type="text" id="ob-allergies" placeholder="Ví dụ: hải sản, trứng, đậu phộng">
                     </div>
+                    <div class="form-group form-group-wide">
+                        <label for="ob-dietary-mode">Chế độ ăn</label>
+                        <select id="ob-dietary-mode">
+                            <option value="" selected>Bình thường</option>
+                            <option value="vegetarian">Ăn chay</option>
+                            <option value="vegan">Thuần chay</option>
+                            <option value="halal">Halal</option>
+                        </select>
+                    </div>
                 </div>
 
                 <div class="slider-section">
@@ -285,7 +294,7 @@
                 <div class="chart-header">
                     <i class="fa-solid fa-chart-bar"></i>
                     <div>
-                        <h2>Độ Ảnh Hưởng Đến Cân Nặng (Random Forest Feature Importance)</h2>
+                        <h2>Độ Ảnh Hưởng Cá Nhân Đến Cân Nặng (Random Forest)</h2>
                     </div>
                 </div>
                 <div class="chart-container importance-container">
@@ -399,9 +408,18 @@
                         <label for="edit-budget">Kinh phí hằng ngày (VNĐ)</label>
                         <input type="number" id="edit-budget" required min="10000" max="5000000">
                     </div>
-                    <div class="form-group form-group-wide">
+                    <div class="form-group">
                         <label for="edit-allergies">Dị ứng thực phẩm</label>
                         <input type="text" id="edit-allergies" placeholder="Ví dụ: hải sản, trứng, đậu phộng">
+                    </div>
+                    <div class="form-group">
+                        <label for="edit-dietary-mode">Chế độ ăn</label>
+                        <select id="edit-dietary-mode">
+                            <option value="">Bình thường</option>
+                            <option value="vegetarian">Ăn chay</option>
+                            <option value="vegan">Thuần chay</option>
+                            <option value="halal">Halal</option>
+                        </select>
                     </div>
                 </div>
 
@@ -424,16 +442,17 @@
                     </div>
                 </div>
 
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" id="btn-modal-cancel">Hủy bỏ</button>
-                    <button type="submit" class="btn btn-primary" id="btn-modal-submit">Cập nhật</button>
-                </div>
             </form>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="btn-modal-cancel">Hủy bỏ</button>
+                <button type="submit" form="profile-edit-form" class="btn btn-primary" id="btn-modal-submit">Cập nhật</button>
+            </div>
         </div>
     </div>
 
     <!-- JS logic scripts -->
-    <script src="/assets/js/app.js"></script>
+    <script src="/assets/js/app.js?v=20260610-dietary-refresh"></script>
 </body>
 
 </html>

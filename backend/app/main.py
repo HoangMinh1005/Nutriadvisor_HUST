@@ -12,6 +12,7 @@ load_dotenv()
 from .check_db import verify_database
 from .services.food_search import search_foods as search_foods_index
 from .services.health_forecaster import HealthForecaster
+from csp.classification import violates_dietary_restrictions
 try:
     from backend.ml.nlp.intent_engine import IntentEngine
     from backend.app.services.meal_plan_pipeline import MealPlanPipeline
@@ -48,10 +49,18 @@ except Exception as e:
 # Initialize K-Means User Segmentation service
 try:
     from backend.ml.clustering.user_segmentation import UserSegmentation
-    from backend.ml.clustering import UserProfile, MENU_TEMPLATES
+    from backend.ml.clustering import (
+        UserProfile,
+        get_segment_policy,
+        apply_segment_policy_to_csp_profile,
+    )
 except ModuleNotFoundError:
     from ml.clustering.user_segmentation import UserSegmentation
-    from ml.clustering import UserProfile, MENU_TEMPLATES
+    from ml.clustering import (
+        UserProfile,
+        get_segment_policy,
+        apply_segment_policy_to_csp_profile,
+    )
 
 segmentation = UserSegmentation(cache_dir="data/ml/clustering")
 try:
@@ -128,6 +137,151 @@ def _as_float(value: Any, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def _normalize_string_list(value: Any) -> List[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        raw_items = value.strip("{}").split(",") if value.startswith("{") else value.split(",")
+    else:
+        raw_items = list(value)
+    return sorted(str(item).strip().strip('"').lower() for item in raw_items if str(item).strip().strip('"'))
+
+
+def _macro_ratios_for_diet(
+    base_ratios: Dict[str, float],
+    dietary_restrictions: List[str] | None,
+    activity_level: str | None = None,
+) -> Dict[str, float]:
+    restrictions = set(_normalize_string_list(dietary_restrictions))
+    activity = str(activity_level or "").strip().lower()
+    ratios = {
+        "protein": float(base_ratios.get("protein", 0.30)),
+        "fat": float(base_ratios.get("fat", 0.25)),
+        "carbs": float(base_ratios.get("carbs", 0.45)),
+    }
+    if "vegan" in restrictions:
+        protein_target = 0.18
+        if activity == "moderately active":
+            protein_target = 0.20
+        elif activity == "very active":
+            protein_target = 0.22
+        ratios.update({"protein": protein_target, "fat": max(ratios["fat"], 0.28)})
+    elif "vegetarian" in restrictions:
+        protein_target = 0.22
+        if activity == "lightly active":
+            protein_target = 0.23
+        elif activity == "moderately active":
+            protein_target = 0.25
+        elif activity == "very active":
+            protein_target = 0.27
+        ratios.update({"protein": protein_target, "fat": max(ratios["fat"], 0.27)})
+    ratios["carbs"] = max(0.0, round(1.0 - ratios["protein"] - ratios["fat"], 3))
+    return ratios
+
+
+def _macro_ratios_for_chat_context(profile: Dict[str, Any], entities: Dict[str, Any]) -> Dict[str, float]:
+    existing = profile.get("macro_ratios")
+    if isinstance(existing, dict):
+        ratios = {
+            "protein": float(existing.get("protein", 0.30)),
+            "fat": float(existing.get("fat", 0.25)),
+            "carbs": float(existing.get("carbs", 0.45)),
+        }
+    else:
+        ratios = {"protein": 0.30, "fat": 0.25, "carbs": 0.45}
+
+    nutrients = {str(n).lower() for n in (entities.get("nutrients") or [])}
+    query_keyword = entities.get("query_keyword")
+    health_goal = str(entities.get("health_goal") or "unknown")
+    activity_level = str(profile.get("physical_activity_level") or "").strip().lower()
+
+    if health_goal == "muscle_gain" or "protein_g" in nutrients or query_keyword == "giàu":
+        ratios.update({"protein": max(ratios["protein"], 0.35), "fat": min(ratios["fat"], 0.25)})
+    elif health_goal == "weight_loss":
+        ratios.update({"protein": max(ratios["protein"], 0.32), "fat": min(ratios["fat"], 0.25)})
+    elif health_goal == "maintenance":
+        ratios.update({"protein": max(ratios["protein"], 0.28)})
+
+    if activity_level == "very active":
+        ratios.update({"protein": max(ratios["protein"], 0.32)})
+
+    ratios["carbs"] = max(0.0, round(1.0 - ratios["protein"] - ratios["fat"], 3))
+    return ratios
+
+
+def _message_requests_normal_diet(message: str) -> bool:
+    text = str(message or "").lower()
+    normal_markers = [
+        "bình thường", "binh thuong", "normal", "không chay", "khong chay",
+        "không vegan", "khong vegan", "không ăn chay", "khong an chay",
+        "thực đơn thường", "thuc don thuong",
+    ]
+    return any(marker in text for marker in normal_markers)
+
+
+def _build_chat_meal_profile(
+    base_profile: Dict[str, Any] | None,
+    entities: Dict[str, Any],
+    message: str,
+) -> Dict[str, Any]:
+    """Build the CSP profile for chat with message context taking priority.
+
+    Stored profile values are useful defaults, but a chat request is often a
+    one-off scenario such as "thực đơn chay 1800 kcal" or "giàu protein".
+    Explicit entities in the current message must therefore override profile
+    fields before KNN/CSP see the request.
+    """
+    profile = (base_profile or {}).copy()
+    profile_updates = entities.get("profile_updates") or {}
+
+    daily_target = (
+        entities.get("calories")
+        if entities.get("calories") is not None
+        else profile_updates.get("daily_calorie_target")
+    )
+    if daily_target is not None:
+        profile["daily_calorie_target"] = float(daily_target)
+    elif "daily_calorie_target" not in profile:
+        profile["daily_calorie_target"] = 2000.0
+
+    if entities.get("budget_vnd") is not None:
+        profile["budget_vnd_max"] = float(entities["budget_vnd"])
+    elif "budget_vnd_max" not in profile:
+        profile["budget_vnd_max"] = 200000.0
+
+    if entities.get("health_goal") and entities.get("health_goal") != "unknown":
+        profile["goal"] = entities["health_goal"]
+        profile["weight_goal"] = entities["health_goal"]
+
+    if entities.get("allergies"):
+        profile["allergies"] = entities["allergies"]
+    else:
+        profile["allergies"] = profile.get("allergies") or []
+
+    if _message_requests_normal_diet(message):
+        profile["dietary_restrictions"] = []
+    elif entities.get("dietary_restrictions"):
+        profile["dietary_restrictions"] = entities["dietary_restrictions"]
+    else:
+        profile["dietary_restrictions"] = profile.get("dietary_restrictions") or []
+
+    if profile_updates.get("physical_activity_level"):
+        profile["physical_activity_level"] = profile_updates["physical_activity_level"]
+
+    profile["macro_ratios"] = _macro_ratios_for_chat_context(profile, entities)
+    profile["exclude_snacks"] = True
+    profile["chat_context"] = {
+        "calories": entities.get("calories"),
+        "budget_vnd": entities.get("budget_vnd"),
+        "health_goal": entities.get("health_goal"),
+        "allergies": entities.get("allergies") or [],
+        "dietary_restrictions": profile.get("dietary_restrictions") or [],
+        "query_keyword": entities.get("query_keyword"),
+        "nutrients": entities.get("nutrients") or [],
+    }
+    return profile
 
 
 def _component_total_cost_vnd(component: Dict[str, Any]) -> float:
@@ -239,6 +393,38 @@ def _load_user_meal_plan(user_id: int) -> List[Dict[str, Any]]:
     return meal_plan
 
 
+def _meal_plan_violates_dietary_restrictions(
+    meal_plan: List[Dict[str, Any]],
+    dietary_restrictions: List[str] | None,
+) -> bool:
+    if not dietary_restrictions:
+        return False
+
+    for day in meal_plan or []:
+        for meal in day.get("meals", []):
+            meal_food = {
+                "food_id": meal.get("food_id"),
+                "name_vi": meal.get("name") or "",
+                "canonical_name_en": meal.get("name") or "",
+                "category": "",
+            }
+            if violates_dietary_restrictions(meal_food, dietary_restrictions):
+                return True
+
+            for component in meal.get("components") or []:
+                if not isinstance(component, dict):
+                    continue
+                component_food = {
+                    "food_id": component.get("food_id"),
+                    "name_vi": component.get("name") or "",
+                    "canonical_name_en": component.get("name") or "",
+                    "category": component.get("category") or "",
+                }
+                if violates_dietary_restrictions(component_food, dietary_restrictions):
+                    return True
+    return False
+
+
 # Verify database on startup
 print("\n[STARTUP] Initializing application...")
 if not verify_database():
@@ -296,7 +482,9 @@ class ProfileRequest(BaseModel):
     sleep_quality: str
     stress_level: int
     allergies: List[str] = []
+    dietary_restrictions: List[str] = []
     weight_goal: str = "maintain"
+    force_meal_plan_refresh: bool = False
 
 
 class SwapRequest(BaseModel):
@@ -309,6 +497,8 @@ class SwapRequest(BaseModel):
 
 class RegenerateMealPlanRequest(BaseModel):
     email: str
+    force: bool = False
+    user_profile: Dict[str, Any] | None = None
 
 
 class ChatRequest(BaseModel):
@@ -340,25 +530,7 @@ def handle_chat(req: ChatRequest) -> Dict[str, Any]:
                     status_code=503,
                     detail="Meal recommendation service is currently unavailable."
                 )
-            # Create profile from request user_profile, falling back to default target and macro ratios
-            profile = (req.user_profile or {}).copy()
-            # If entities extracted target calories or goal, apply them
-            if entities.get("calories") is not None:
-                profile["daily_calorie_target"] = entities["calories"]
-            if entities.get("health_goal") != "unknown":
-                profile["goal"] = entities["health_goal"]
-            if entities.get("budget_vnd") is not None:
-                profile["budget_vnd_max"] = entities["budget_vnd"]
-            if entities.get("allergies"):
-                profile["allergies"] = entities["allergies"]
-            if entities.get("dietary_restrictions"):
-                profile["dietary_restrictions"] = entities["dietary_restrictions"]
-                
-            # If no target calorie is specified anywhere, fallback to standard 2000 kcal
-            if "daily_calorie_target" not in profile:
-                profile["daily_calorie_target"] = 2000.0
-                
-            profile["exclude_snacks"] = True
+            profile = _build_chat_meal_profile(req.user_profile, entities, req.message)
             
             # Generate the meal plan (which is a 7-day schedule)
             plan = meal_pipeline.generate_meal_plan(profile)
@@ -382,6 +554,15 @@ def handle_chat(req: ChatRequest) -> Dict[str, Any]:
                 "meals": suggested_meals,
                 "total_calories": round(total_cal, 2),
                 "total_cost": round(total_cost, 2),
+                "effective_profile": {
+                    "daily_calorie_target": profile.get("daily_calorie_target"),
+                    "budget_vnd_max": profile.get("budget_vnd_max"),
+                    "physical_activity_level": profile.get("physical_activity_level"),
+                    "goal": profile.get("goal"),
+                    "allergies": profile.get("allergies") or [],
+                    "dietary_restrictions": profile.get("dietary_restrictions") or [],
+                    "macro_ratios": profile.get("macro_ratios"),
+                },
                 "reply": "Dưới đây là gợi ý thực đơn phù hợp cho bạn:"
             }
             
@@ -485,7 +666,7 @@ def handle_login(req: LoginRequest) -> Dict[str, Any]:
                 # 1. Fetch user profile
                 cur.execute("""
                     SELECT user_id, full_name, email, gender, birth_year, height_cm, weight_kg, bmi, 
-                           allergies, weight_goal, daily_calorie_target, budget_vnd_max, 
+                           allergies, dietary_restrictions, weight_goal, daily_calorie_target, budget_vnd_max,
                            physical_activity_level, sleep_quality, stress_level
                     FROM user_profiles 
                     WHERE email = %s;
@@ -645,6 +826,7 @@ def handle_save_profile(req: ProfileRequest) -> Dict[str, Any]:
         sleep_quality = req.sleep_quality.strip()
         stress_level = req.stress_level
         allergies = req.allergies
+        dietary_restrictions = req.dietary_restrictions
         weight_goal = req.weight_goal.strip()
         
         current_year = datetime.datetime.now().year
@@ -653,7 +835,8 @@ def handle_save_profile(req: ProfileRequest) -> Dict[str, Any]:
         with psycopg2.connect(_get_database_url()) as conn:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
-                    SELECT daily_calorie_target, budget_vnd_max, physical_activity_level, allergies, weight_goal
+                    SELECT daily_calorie_target, budget_vnd_max, physical_activity_level,
+                           allergies, dietary_restrictions, weight_goal
                     FROM user_profiles
                     WHERE email = %s;
                 """, [email])
@@ -663,9 +846,9 @@ def handle_save_profile(req: ProfileRequest) -> Dict[str, Any]:
                     INSERT INTO user_profiles (
                         full_name, email, gender, birth_year, height_cm, weight_kg, 
                         daily_calorie_target, weight_goal, budget_vnd_max, 
-                        physical_activity_level, sleep_quality, stress_level, allergies
+                        physical_activity_level, sleep_quality, stress_level, allergies, dietary_restrictions
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (email) DO UPDATE SET
                         full_name = EXCLUDED.full_name,
                         gender = EXCLUDED.gender,
@@ -679,17 +862,18 @@ def handle_save_profile(req: ProfileRequest) -> Dict[str, Any]:
                         sleep_quality = EXCLUDED.sleep_quality,
                         stress_level = EXCLUDED.stress_level,
                         allergies = EXCLUDED.allergies,
+                        dietary_restrictions = EXCLUDED.dietary_restrictions,
                         updated_at = NOW()
                     RETURNING user_id;
                 """, [full_name, email, gender, birth_year, height_cm, weight_kg, 
                       daily_calorie_target, weight_goal, budget_vnd_max, 
-                      physical_activity_level, sleep_quality, stress_level, allergies])
+                      physical_activity_level, sleep_quality, stress_level, allergies, dietary_restrictions])
                 user_id = cur.fetchone()["user_id"]
                 conn.commit()
                 
                 cur.execute("""
                     SELECT user_id, full_name, email, gender, birth_year, height_cm, weight_kg, bmi, 
-                           allergies, weight_goal, daily_calorie_target, budget_vnd_max, 
+                           allergies, dietary_restrictions, weight_goal, daily_calorie_target, budget_vnd_max,
                            physical_activity_level, sleep_quality, stress_level
                     FROM user_profiles 
                     WHERE user_id = %s;
@@ -702,15 +886,22 @@ def handle_save_profile(req: ProfileRequest) -> Dict[str, Any]:
                 attach_energy_balance_fields(profile_data, age)
         meal_plan = _load_user_meal_plan(user_id)
         meal_fields_changed = True
+        dietary_restrictions_changed = True
         if existing_profile:
+            dietary_restrictions_changed = (
+                _normalize_string_list(existing_profile.get("dietary_restrictions"))
+                != _normalize_string_list(dietary_restrictions)
+            )
             meal_fields_changed = (
                 int(existing_profile.get("daily_calorie_target") or 0) != int(daily_calorie_target)
                 or int(existing_profile.get("budget_vnd_max") or 0) != int(budget_vnd_max)
                 or str(existing_profile.get("physical_activity_level") or "") != physical_activity_level
                 or str(existing_profile.get("weight_goal") or "") != weight_goal
-                or sorted(existing_profile.get("allergies") or []) != sorted(allergies or [])
+                or _normalize_string_list(existing_profile.get("allergies")) != _normalize_string_list(allergies)
+                or dietary_restrictions_changed
             )
-        meal_plan_stale = meal_fields_changed or not meal_plan
+        dietary_plan_invalid = _meal_plan_violates_dietary_restrictions(meal_plan, dietary_restrictions)
+        meal_plan_stale = req.force_meal_plan_refresh or meal_fields_changed or not meal_plan or dietary_plan_invalid
         
         tdee = calculate_tdee(
             weight_kg=float(weight_kg),
@@ -745,7 +936,8 @@ def handle_save_profile(req: ProfileRequest) -> Dict[str, Any]:
             "profile": profile_data,
             "meal_plan": meal_plan,
             "forecast": forecast_data,
-            "meal_plan_stale": meal_plan_stale
+            "meal_plan_stale": meal_plan_stale,
+            "dietary_restrictions_changed": dietary_restrictions_changed
         }
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
@@ -767,7 +959,7 @@ def regenerate_meal_plan(req: RegenerateMealPlanRequest) -> Dict[str, Any]:
             with conn.cursor(cursor_factory=RealDictCursor) as cur:
                 cur.execute("""
                     SELECT user_id, full_name, gender, birth_year, height_cm, weight_kg,
-                           allergies, weight_goal, daily_calorie_target, budget_vnd_max,
+                           allergies, dietary_restrictions, weight_goal, daily_calorie_target, budget_vnd_max,
                            physical_activity_level
                     FROM user_profiles
                     WHERE email = %s;
@@ -776,8 +968,28 @@ def regenerate_meal_plan(req: RegenerateMealPlanRequest) -> Dict[str, Any]:
         if not profile:
             raise HTTPException(status_code=404, detail="User not found")
 
+        request_profile = req.user_profile or {}
+        if "dietary_restrictions" in request_profile:
+            profile["dietary_restrictions"] = request_profile.get("dietary_restrictions") or []
+        if "allergies" in request_profile:
+            profile["allergies"] = request_profile.get("allergies") or []
+        if "daily_calorie_target" in request_profile:
+            profile["daily_calorie_target"] = request_profile.get("daily_calorie_target")
+        if "budget_vnd_max" in request_profile:
+            profile["budget_vnd_max"] = request_profile.get("budget_vnd_max")
+        if "physical_activity_level" in request_profile:
+            profile["physical_activity_level"] = request_profile.get("physical_activity_level")
+
         current_year = datetime.datetime.now().year
         age = current_year - profile["birth_year"] if profile["birth_year"] else 20
+        maintenance_calories = calculate_tdee(
+            weight_kg=float(profile["weight_kg"]),
+            height_cm=float(profile["height_cm"]),
+            age=age,
+            gender=profile.get("gender") or "M",
+            activity_level=profile.get("physical_activity_level") or "Moderately Active",
+        )
+        daily_caloric_surplus = float(profile["daily_calorie_target"] or 0.0) - maintenance_calories
         goal_raw = str(profile["weight_goal"] or "maintain").lower()
         if "lose" in goal_raw or "loss" in goal_raw:
             health_goal = "weight_loss"
@@ -796,7 +1008,13 @@ def regenerate_meal_plan(req: RegenerateMealPlanRequest) -> Dict[str, Any]:
                     height_cm=float(profile["height_cm"]),
                     daily_calorie_target=int(profile["daily_calorie_target"]),
                     health_goal=health_goal,
-                    allergies=profile["allergies"] or []
+                    allergies=profile["allergies"] or [],
+                    gender=profile.get("gender") or "M",
+                    physical_activity_level=profile.get("physical_activity_level") or "Moderately Active",
+                    dietary_restrictions=profile["dietary_restrictions"] or [],
+                    budget_vnd_max=float(profile["budget_vnd_max"] or 100000.0),
+                    maintenance_calories=maintenance_calories,
+                    daily_caloric_surplus=daily_caloric_surplus,
                 )
                 assignment = segmentation.predict(user_p)
                 segment_name = assignment.segment_name
@@ -806,21 +1024,44 @@ def regenerate_meal_plan(req: RegenerateMealPlanRequest) -> Dict[str, Any]:
         if profile["physical_activity_level"] == "Very Active" or "gym" in str(profile["full_name"] or "").lower():
             segment_name = "performance_athlete"
 
-        template = MENU_TEMPLATES.get(segment_name, MENU_TEMPLATES["balanced_lifestyle"])
+        user_p_for_policy = UserProfile(
+            user_id=profile["user_id"],
+            age=age,
+            weight_kg=float(profile["weight_kg"]),
+            height_cm=float(profile["height_cm"]),
+            daily_calorie_target=float(profile["daily_calorie_target"]),
+            health_goal=health_goal,
+            allergies=profile["allergies"] or [],
+            gender=profile.get("gender") or "M",
+            physical_activity_level=profile.get("physical_activity_level") or "Moderately Active",
+            dietary_restrictions=profile["dietary_restrictions"] or [],
+            budget_vnd_max=float(profile["budget_vnd_max"] or 100000.0),
+            maintenance_calories=maintenance_calories,
+            daily_caloric_surplus=daily_caloric_surplus,
+        )
+        segment_policy = get_segment_policy(segment_name, user_p_for_policy)
+        base_macro_ratios = segment_policy["base_macro_ratios"]
         csp_profile = {
             "daily_calorie_target": float(profile["daily_calorie_target"]),
             "budget_vnd_max": float(profile["budget_vnd_max"]),
-            "macro_ratios": {
-                "protein": template["protein_target_ratio"],
-                "fat": template["fat_target_ratio"],
-                "carbs": template["carbs_target_ratio"]
-            },
+            "macro_ratios": _macro_ratios_for_diet(
+                base_macro_ratios,
+                profile["dietary_restrictions"] or [],
+                profile.get("physical_activity_level"),
+            ),
             "exclude_snacks": True,
-            "allergies": profile["allergies"] or []
+            "allergies": profile["allergies"] or [],
+            "dietary_restrictions": profile["dietary_restrictions"] or []
         }
+        csp_profile = apply_segment_policy_to_csp_profile(csp_profile, segment_policy)
 
         plan_res = meal_pipeline.generate_meal_plan(csp_profile)
         if not plan_res.get("feasible") or not plan_res.get("meal_plan"):
+            return {"status": "infeasible", "meal_plan": [], "meal_plan_stale": True}
+        if _meal_plan_violates_dietary_restrictions(
+            plan_res.get("meal_plan", []),
+            csp_profile.get("dietary_restrictions"),
+        ):
             return {"status": "infeasible", "meal_plan": [], "meal_plan_stale": True}
 
         with psycopg2.connect(_get_database_url()) as conn:
@@ -848,7 +1089,11 @@ def regenerate_meal_plan(req: RegenerateMealPlanRequest) -> Dict[str, Any]:
         return {
             "status": "success",
             "meal_plan": _load_user_meal_plan(profile["user_id"]),
-            "meal_plan_stale": False
+            "meal_plan_stale": False,
+            "regenerated": True,
+            "dietary_restrictions": csp_profile.get("dietary_restrictions") or [],
+            "segment_name": csp_profile.get("segment_name"),
+            "segment_policy": csp_profile.get("policy_name"),
         }
     except HTTPException:
         raise

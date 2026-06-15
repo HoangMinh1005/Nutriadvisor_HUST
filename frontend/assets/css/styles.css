@@ -1442,8 +1442,10 @@ header#main-header {
     display: flex;
     justify-content: center;
     align-items: center;
+    padding: 24px;
     z-index: 1000;
     animation: fadeInModal 0.25s ease;
+    overflow: hidden;
 }
 
 @keyframes fadeInModal {
@@ -1453,10 +1455,14 @@ header#main-header {
 
 .modal-card {
     width: 100%;
-    max-width: 660px;
-    padding: 28px;
+    max-width: 820px;
+    max-height: calc(100vh - 48px);
+    padding: 0;
     border: 1px solid var(--border-highlight);
     animation: slideUpModal 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 @keyframes slideUpModal {
@@ -1468,9 +1474,75 @@ header#main-header {
     display: flex;
     justify-content: space-between;
     align-items: center;
-    margin-bottom: 24px;
-    padding-bottom: 14px;
+    padding: 18px 24px 14px;
     border-bottom: 1px solid var(--border-color);
+    flex: 0 0 auto;
+}
+
+#profile-edit-form {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 16px 24px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.16) transparent;
+}
+
+.modal-card .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 18px;
+    margin-bottom: 14px;
+}
+
+.modal-card .form-group {
+    display: block;
+}
+
+.modal-card .form-group-wide {
+    grid-column: 1 / -1;
+}
+
+.modal-card .form-group label {
+    display: block;
+    margin-bottom: 6px;
+}
+
+.modal-card .form-hint {
+    display: block;
+    margin-top: 5px;
+}
+
+.modal-card select,
+.modal-card input {
+    min-height: 38px;
+    padding: 8px 12px;
+}
+
+.modal-card .slider-section {
+    padding: 12px 16px;
+    margin-bottom: 0;
+}
+
+.modal-card .slider-section h3 {
+    margin-bottom: 10px;
+}
+
+.modal-card .slider-section .form-group {
+    display: block;
+    margin-bottom: 12px;
+}
+
+.modal-card .slider-section .form-group:last-child {
+    margin-bottom: 0;
+}
+
+#profile-edit-form::-webkit-scrollbar {
+    width: 8px;
+}
+
+#profile-edit-form::-webkit-scrollbar-thumb {
+    background-color: rgba(255, 255, 255, 0.16);
+    border-radius: 999px;
 }
 
 .modal-header h2 {
@@ -1494,12 +1566,15 @@ header#main-header {
 }
 
 .modal-footer {
+    flex: 0 0 auto;
     display: flex;
     justify-content: flex-end;
     gap: 12px;
-    padding-top: 18px;
+    padding: 14px 24px 18px;
     border-top: 1px solid var(--border-color);
-    margin-top: 8px;
+    margin-top: 0;
+    background: rgba(15, 21, 33, 0.98);
+    z-index: 2;
 }
 
 /* Utilities classes */
@@ -1519,6 +1594,40 @@ header#main-header {
 }
 
 @media (max-width: 768px) {
+    .modal-overlay {
+        align-items: stretch;
+        padding: 10px;
+    }
+    .modal-card {
+        max-height: calc(100vh - 20px);
+    }
+    .modal-header {
+        padding: 18px 18px 14px;
+    }
+    #profile-edit-form {
+        padding: 14px 18px;
+    }
+    .modal-card .form-grid {
+        grid-template-columns: 1fr;
+    }
+    .modal-card .form-group {
+        display: block;
+    }
+    .modal-card .form-group label {
+        display: block;
+        margin-bottom: 6px;
+    }
+    .modal-card .form-hint {
+        display: block;
+        margin-top: 6px;
+    }
+    .modal-footer {
+        flex-direction: column-reverse;
+        padding: 14px 18px 18px;
+    }
+    .modal-footer .btn {
+        width: 100%;
+    }
     .metrics-row {
         grid-template-columns: repeat(2, 1fr);
     }

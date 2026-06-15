@@ -8,6 +8,10 @@ from .menu_templates import (
     get_all_templates,
     get_segment_names
 )
+from .segment_policies import (
+    get_segment_policy,
+    apply_segment_policy_to_csp_profile,
+)
 
 __all__ = [
     "UserProfile",
@@ -17,5 +21,7 @@ __all__ = [
     "MENU_TEMPLATES",
     "get_menu_template",
     "get_all_templates",
-    "get_segment_names"
+    "get_segment_names",
+    "get_segment_policy",
+    "apply_segment_policy_to_csp_profile",
 ]
