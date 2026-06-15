@@ -81,6 +81,35 @@ def test_knn_fit():
     assert recommender.max_values["energy_kcal"] == 389.0
 
 
+def test_estimate_daily_portion_units_is_profile_aware():
+    low = KNNFoodRecommender.estimate_daily_portion_units({
+        "daily_calorie_target": 1300,
+        "macro_ratios": {"protein": 0.30, "fat": 0.25, "carbs": 0.45},
+    })
+    normal = KNNFoodRecommender.estimate_daily_portion_units({
+        "daily_calorie_target": 2200,
+        "macro_ratios": {"protein": 0.30, "fat": 0.25, "carbs": 0.45},
+    })
+    high = KNNFoodRecommender.estimate_daily_portion_units({
+        "daily_calorie_target": 3000,
+        "macro_ratios": {"protein": 0.30, "fat": 0.25, "carbs": 0.45},
+        "enable_snack_from_kcal": 2400,
+    })
+    vegan_high = KNNFoodRecommender.estimate_daily_portion_units({
+        "daily_calorie_target": 3000,
+        "macro_ratios": {"protein": 0.30, "fat": 0.25, "carbs": 0.45},
+        "dietary_restrictions": ["vegan"],
+        "enable_snack_from_kcal": 1600,
+    })
+    high_protein = KNNFoodRecommender.estimate_daily_portion_units({
+        "daily_calorie_target": 2200,
+        "macro_ratios": {"protein": 0.40, "fat": 0.20, "carbs": 0.40},
+    })
+
+    assert low < normal < high < vegan_high
+    assert high_protein < normal
+
+
 def test_knn_recommend_for_profile():
     matrix, metadata, raw_df = _mock_nutrient_data()
     recommender = KNNFoodRecommender()
@@ -120,6 +149,72 @@ def test_knn_recommend_similar():
     assert 8 in similar_ids or 5 in similar_ids
     # Query food should be excluded
     assert 1 not in similar_ids
+
+
+def test_knn_recommend_similar_respects_meal_role_for_noodle_dish():
+    columns = [
+        "energy_kcal", "protein_g", "fat_g", "carbs_g",
+        "vitamin_a_mcg", "beta_carotene_mcg", "vitamin_c_mg", "calcium_mg",
+        "iron_mg", "zinc_mg", "sodium_mg", "cholesterol_mg",
+        "magnesium_mg", "transfat_mg"
+    ]
+    raw_data = [
+        [53.0, 2.0, 1.0, 9.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [54.0, 2.1, 1.0, 9.2, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [73.0, 4.0, 1.0, 12.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [365.0, 7.0, 7.0, 68.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [16.0, 1.0, 0.0, 3.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+        [82.0, 1.0, 1.0, 17.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    ]
+    raw_df = pd.DataFrame(raw_data, columns=columns)
+    norm_data = []
+    for col in columns:
+        vals = raw_df[col]
+        mn, mx = vals.min(), vals.max()
+        norm_data.append((vals - mn) / (mx - mn) if mx > mn else pd.Series([0.0] * len(vals)))
+    matrix = np.column_stack(norm_data).astype(np.float32)
+    metadata = [
+        {"food_id": 11, "canonical_key": "bun_oc", "canonical_name_en": "Snail noodle soup", "name_vi": "Bún ốc", "category": "mon_nuoc", "tags": {"is_main_dish"}},
+        {"food_id": 12, "canonical_key": "bun_cua", "canonical_name_en": "Crab noodle soup", "name_vi": "Bún cua", "category": "mon_nuoc", "tags": {"is_main_dish"}},
+        {"food_id": 13, "canonical_key": "pho_ga", "canonical_name_en": "Chicken pho", "name_vi": "Phở gà", "category": "mon_nuoc", "tags": {"is_main_dish"}},
+        {"food_id": 14, "canonical_key": "hat_tieu", "canonical_name_en": "Pepper", "name_vi": "Hạt tiêu", "category": "gia_vi_nuoc_cham", "tags": set()},
+        {"food_id": 15, "canonical_key": "muop", "canonical_name_en": "Luffa", "name_vi": "Mướp Nhật bản, tươi", "category": "rau_cu", "tags": {"role_fiber"}},
+        {"food_id": 16, "canonical_key": "che_chuoi", "canonical_name_en": "Banana sweet soup", "name_vi": "Chè chuối", "category": "trang_mieng", "tags": {"is_dessert_snack"}},
+    ]
+    for i, meta in enumerate(metadata):
+        meta["energy_kcal"] = raw_data[i][0]
+        meta["protein_g"] = raw_data[i][1]
+        meta["fat_g"] = raw_data[i][2]
+        meta["carbs_g"] = raw_data[i][3]
+
+    recommender = KNNFoodRecommender()
+    recommender.fit(matrix, metadata, raw_df)
+
+    similar = recommender.recommend_similar(food_id=11, n=5, exclude=[])
+    similar_ids = [s["food_id"] for s in similar]
+
+    assert similar_ids == [12, 13]
+    assert 14 not in similar_ids
+    assert 15 not in similar_ids
+    assert 16 not in similar_ids
+
+
+def test_knn_recommend_similar_caches_replacement_profiles(monkeypatch):
+    matrix, metadata, raw_df = _mock_nutrient_data()
+    recommender = KNNFoodRecommender()
+    recommender.fit(matrix, metadata, raw_df)
+
+    first = recommender.recommend_similar(food_id=1, n=3, exclude=[])
+    calls_after_first = len(recommender._replacement_profile_cache)
+
+    def fail_if_reclassifying(idx):
+        raise AssertionError("replacement profiles should be served from result cache")
+
+    monkeypatch.setattr(recommender, "_replacement_profile_for_index", fail_if_reclassifying)
+    second = recommender.recommend_similar(food_id=1, n=3, exclude=[])
+
+    assert second == first
+    assert calls_after_first > 0
 
 
 def test_knn_recommend_complementary():

@@ -6,20 +6,47 @@ import numpy as np
 import pandas as pd
 from typing import Any, Dict, List, Set
 
+from csp.classification import (
+    classify_food,
+    clean_category,
+    get_dynamic_tags,
+    is_standalone_main_dish,
+)
+
 
 class KNNFoodRecommender:
     """Pre-filter foods for CSP using nutrient-vector similarity."""
 
     def __init__(self) -> None:
         self.feature_matrix: np.ndarray | None = None
+        self._feature_unit_matrix: np.ndarray | None = None
+        self._macro_unit_matrix: np.ndarray | None = None
         self.food_metadata: list[dict] | None = None
+        self._food_index_by_id: dict[int, int] = {}
+        self._replacement_profile_cache: dict[int, dict[str, Any]] = {}
+        self._similar_cache: dict[tuple[int, int, tuple[int, ...]], list[dict]] = {}
         self.min_values: dict[str, float] = {}
         self.max_values: dict[str, float] = {}
 
     def fit(self, feature_matrix: np.ndarray, food_metadata: list[dict], raw_df: pd.DataFrame | None = None) -> None:
         """Fit KNN on normalized nutrient vectors and extract min/max for normalization."""
-        self.feature_matrix = feature_matrix
+        self.feature_matrix = np.asarray(feature_matrix, dtype=np.float32)
         self.food_metadata = food_metadata
+        self._food_index_by_id = {
+            int(food["food_id"]): idx
+            for idx, food in enumerate(food_metadata)
+        }
+        self._replacement_profile_cache = {}
+        self._similar_cache = {}
+
+        full_norms = np.linalg.norm(self.feature_matrix, axis=1, keepdims=True)
+        full_norms_safe = np.where(full_norms == 0.0, 1.0, full_norms)
+        self._feature_unit_matrix = self.feature_matrix / full_norms_safe
+
+        macro_matrix = self.feature_matrix[:, :4]
+        macro_norms = np.linalg.norm(macro_matrix, axis=1, keepdims=True)
+        macro_norms_safe = np.where(macro_norms == 0.0, 1.0, macro_norms)
+        self._macro_unit_matrix = macro_matrix / macro_norms_safe
 
         try:
             from backend.ml.feature_store.extract_features import NUTRIENT_COLUMNS
@@ -63,6 +90,185 @@ class KNNFoodRecommender:
             norm_values.append(norm_val)
         return np.asarray(norm_values, dtype=np.float32)
 
+    @staticmethod
+    def estimate_daily_portion_units(user_profile: dict[str, Any]) -> float:
+        """Estimate total daily 100g food units for mapping daily targets to food vectors."""
+        daily_cal = float(user_profile.get("daily_calorie_target") or 2000.0)
+        restrictions = {
+            str(item).strip().lower()
+            for item in (user_profile.get("dietary_restrictions") or [])
+            if str(item).strip()
+        }
+        ratios = user_profile.get("macro_ratios") or {}
+        protein_ratio = float(ratios.get("protein", 0.30))
+        exclude_snacks = bool(user_profile.get("exclude_snacks", False))
+        snack_threshold = float(user_profile.get("enable_snack_from_kcal") or 2400.0)
+
+        if daily_cal <= 1400.0:
+            units = 12.5
+        elif daily_cal <= 1800.0:
+            units = 14.0
+        elif daily_cal <= 2400.0:
+            units = 15.5
+        elif daily_cal <= 3000.0:
+            units = 18.0
+        else:
+            units = 20.5
+
+        if {"vegetarian", "vegan"}.intersection(restrictions):
+            units += 2.0
+        elif restrictions:
+            units += 0.75
+
+        if daily_cal >= snack_threshold and not exclude_snacks:
+            units += 1.0
+
+        if protein_ratio >= 0.35:
+            units -= 1.0
+        elif protein_ratio <= 0.22:
+            units += 0.75
+
+        return max(11.0, min(units, 23.0))
+
+    @staticmethod
+    def _food_value(food: dict[str, Any], *keys: str) -> float:
+        for key in keys:
+            value = food.get(key)
+            if value is not None:
+                try:
+                    return float(value)
+                except (TypeError, ValueError):
+                    continue
+        return 0.0
+
+    @staticmethod
+    def _ensure_tags(food: dict[str, Any]) -> set[str]:
+        tags = food.get("tags") or set()
+        if isinstance(tags, list):
+            tags = set(tags)
+        if not tags:
+            tags = get_dynamic_tags(food)
+            food["tags"] = tags
+        return tags
+
+    @staticmethod
+    def _food_name(food: dict[str, Any]) -> str:
+        return str(food.get("name_vi") or food.get("canonical_name_en") or food.get("name_en") or "").lower()
+
+    @staticmethod
+    def _classify_replacement_kind(
+        food: dict[str, Any],
+        tags: set[str],
+        name: str,
+        category: str,
+        role: str,
+    ) -> str:
+        noodle_keywords = [
+            "bún", "bun", "phở", "pho", "miến", "mien", "mỳ", "mì", "my ",
+            "cháo", "chao", "bánh canh", "banh canh", "hủ tiếu", "hu tieu",
+            "bánh đa", "banh da",
+        ]
+        main_keywords = noodle_keywords + [
+            "xôi", "xoi", "bánh mì", "banh mi", "bánh cuốn", "banh cuon",
+            "cơm rang", "com rang", "cơm tấm", "com tam",
+        ]
+
+        if is_standalone_main_dish(food) or any(k in name for k in main_keywords) or "mon_nuoc" in category:
+            if any(k in name for k in noodle_keywords) or "mon_nuoc" in category:
+                return "main_bowl"
+            return "main_dish"
+        if "is_dessert_snack" in tags:
+            return "snack"
+        if role in {"MAIN_PROTEIN", "PLANT_PROTEIN"}:
+            return "protein"
+        if role == "STAPLE_CARB":
+            return "carb"
+        if role == "FIBER_SIDE":
+            return "fiber"
+        return "accessory"
+
+    def _replacement_profile_for_index(self, idx: int) -> dict[str, Any]:
+        cached = self._replacement_profile_cache.get(idx)
+        if cached is not None:
+            return cached
+
+        food = self.food_metadata[idx]
+        tags = self._ensure_tags(food)
+        name = self._food_name(food)
+        category = clean_category(food.get("category"))
+        role = classify_food(food)
+        profile = {
+            "idx": idx,
+            "food_id": int(food["food_id"]),
+            "kind": self._classify_replacement_kind(food, tags, name, category, role),
+            "role": role,
+            "tags": tags,
+            "category": category,
+            "calories": self._food_value(food, "calories", "energy_kcal"),
+        }
+        self._replacement_profile_cache[idx] = profile
+        return profile
+
+    def _replacement_kind(self, food: dict[str, Any]) -> str:
+        tags = self._ensure_tags(food)
+        name = self._food_name(food)
+        category = clean_category(food.get("category"))
+        role = classify_food(food)
+        return self._classify_replacement_kind(food, tags, name, category, role)
+
+    @staticmethod
+    def _is_compatible_replacement(query: dict[str, Any], candidate: dict[str, Any]) -> bool:
+        query_kind = query["kind"]
+        candidate_kind = candidate["kind"]
+        candidate_role = candidate["role"]
+        candidate_tags = candidate["tags"]
+
+        if candidate_kind == "accessory":
+            return False
+        if candidate_role == "ACCESSORY_CONDIMENT" and candidate_kind not in {"main_bowl", "main_dish"}:
+            return False
+        if query_kind not in {"snack", "accessory"} and "is_dessert_snack" in candidate_tags:
+            return False
+
+        query_cal = float(query["calories"])
+        candidate_cal = float(candidate["calories"])
+        if query_cal > 0.0 and candidate_cal > 0.0:
+            if candidate_cal < query_cal * 0.45 or candidate_cal > query_cal * 2.75:
+                return False
+
+        if query_kind == "main_bowl":
+            return candidate_kind == "main_bowl"
+        if query_kind == "main_dish":
+            return candidate_kind in {"main_dish", "main_bowl"}
+        if query_kind == "protein":
+            return candidate_kind == "protein"
+        if query_kind == "carb":
+            return candidate_kind in {"carb", "main_bowl", "main_dish"}
+        if query_kind == "fiber":
+            return candidate_kind == "fiber"
+        if query_kind == "snack":
+            return candidate_kind == "snack"
+        return candidate_kind not in {"accessory"}
+
+    @staticmethod
+    def _replacement_penalty(query: dict[str, Any], candidate: dict[str, Any]) -> float:
+        query_kind = query["kind"]
+        candidate_kind = candidate["kind"]
+        penalty = 0.0
+        if query_kind != candidate_kind:
+            penalty += 0.08
+
+        query_cat = query["category"]
+        cand_cat = candidate["category"]
+        if query_cat and cand_cat and query_cat != cand_cat:
+            penalty += 0.03
+
+        query_cal = float(query["calories"])
+        cand_cal = float(candidate["calories"])
+        if query_cal > 0.0 and cand_cal > 0.0:
+            penalty += min(abs(cand_cal - query_cal) / max(query_cal, 1.0), 2.0) * 0.04
+        return penalty
+
     def recommend_for_profile(self, user_profile: dict[str, Any], n: int = 120) -> list[int]:
         """Create a candidate pool for CSP based on user's target calorie and macro ratios.
 
@@ -82,8 +288,8 @@ class KNNFoodRecommender:
         target_f_g = daily_cal * ratios.get("fat", 0.3) / 9.0
         target_c_g = daily_cal * ratios.get("carbs", 0.4) / 4.0
 
-        # Scale down to a standard 100g portion reference
-        portion_divisor = 15.0
+        # Scale daily targets down to a realistic daily count of 100g food units.
+        portion_divisor = self.estimate_daily_portion_units(user_profile)
         target_dict = {
             "energy_kcal": daily_cal / portion_divisor,
             "protein_g": target_p_g / portion_divisor,
@@ -99,18 +305,13 @@ class KNNFoodRecommender:
         query_vector = self._normalize_query_vector(target_dict, macro_keys)
 
         # 2. Compute cosine similarity on 4D submatrix (energy, protein, fat, carbs)
-        sub_matrix = self.feature_matrix[:, :4]
         q_norm = np.linalg.norm(query_vector)
         if q_norm == 0:
             q_unit = query_vector
         else:
             q_unit = query_vector / q_norm
 
-        m_norms = np.linalg.norm(sub_matrix, axis=1)
-        m_norms_safe = np.where(m_norms == 0.0, 1.0, m_norms)
-
-        similarities = np.dot(sub_matrix, q_unit) / m_norms_safe
-        similarities = np.where(m_norms == 0.0, 0.0, similarities)
+        similarities = np.dot(self._macro_unit_matrix, q_unit)
         distances = 1.0 - similarities
 
         sorted_indices = np.argsort(distances)
@@ -254,23 +455,23 @@ class KNNFoodRecommender:
         return selected_list
 
     def recommend_similar(self, food_id: int, n: int = 5, exclude: list[int] | None = None) -> list[dict]:
-        """Gợi ý thay thế: tìm N foods tương tự về dinh dưỡng (14D)."""
-        if self.feature_matrix is None or self.food_metadata is None:
+        """Gợi ý thay thế: tìm món tương tự về dinh dưỡng và tương thích vai trò bữa ăn."""
+        if self.feature_matrix is None or self._feature_unit_matrix is None or self.food_metadata is None:
             raise RuntimeError("KNNRecommender is not fitted yet. Call fit() first.")
 
         if exclude is None:
             exclude = []
+        exclude_set = {int(fid) for fid in exclude}
+        cache_key = (int(food_id), int(n), tuple(sorted(exclude_set)))
+        cached = self._similar_cache.get(cache_key)
+        if cached is not None:
+            return [item.copy() for item in cached]
 
-        # Find query index
-        query_idx = None
-        for idx, food in enumerate(self.food_metadata):
-            if int(food["food_id"]) == int(food_id):
-                query_idx = idx
-                break
-
+        query_idx = self._food_index_by_id.get(int(food_id))
         if query_idx is None:
             return []
 
+        query_profile = self._replacement_profile_for_index(query_idx)
         query_vector = self.feature_matrix[query_idx]
         q_norm = np.linalg.norm(query_vector)
         if q_norm == 0:
@@ -278,21 +479,43 @@ class KNNFoodRecommender:
         else:
             q_unit = query_vector / q_norm
 
-        m_norms = np.linalg.norm(self.feature_matrix, axis=1)
-        m_norms_safe = np.where(m_norms == 0.0, 1.0, m_norms)
-
-        similarities = np.dot(self.feature_matrix, q_unit) / m_norms_safe
-        similarities = np.where(m_norms == 0.0, 0.0, similarities)
+        similarities = np.dot(self._feature_unit_matrix, q_unit)
         distances = 1.0 - similarities
 
-        sorted_indices = np.argsort(distances)
+        total = len(self.food_metadata)
+        windows = []
+        for window in (max(n * 20, 80), max(n * 40, 160), total):
+            window = min(max(window, n), total)
+            if window not in windows:
+                windows.append(window)
+
+        scored_indices = []
+        for window in windows:
+            if window >= total:
+                candidate_indices = np.argsort(distances)
+            else:
+                candidate_indices = np.argpartition(distances, window - 1)[:window]
+                candidate_indices = candidate_indices[np.argsort(distances[candidate_indices])]
+
+            scored_indices = []
+            for idx in candidate_indices:
+                idx = int(idx)
+                candidate_profile = self._replacement_profile_for_index(idx)
+                fid = candidate_profile["food_id"]
+                if fid == int(food_id) or fid in exclude_set:
+                    continue
+                if not self._is_compatible_replacement(query_profile, candidate_profile):
+                    continue
+                score = float(distances[idx]) + self._replacement_penalty(query_profile, candidate_profile)
+                scored_indices.append((score, idx))
+            scored_indices.sort(key=lambda item: item[0])
+            if len(scored_indices) >= n or window >= total:
+                break
 
         recommendations = []
-        for idx in sorted_indices:
+        for score, idx in scored_indices:
             food = self.food_metadata[idx]
             fid = int(food["food_id"])
-            if fid == int(food_id) or fid in exclude:
-                continue
 
             recommendations.append({
                 "food_id": fid,
@@ -304,12 +527,13 @@ class KNNFoodRecommender:
                 "fat": float(food.get("fat") or food.get("fat_g") or 0.0),
                 "carbs": float(food.get("carbs") or food.get("carbs_g") or 0.0),
                 "cost_vnd_100g": float(food.get("cost_vnd_100g") or food.get("price_100g") or 0.0),
-                "match_score": float(1.0 - distances[idx]),
+                "match_score": float(max(0.0, min(1.0, 1.0 - score))),
             })
 
             if len(recommendations) >= n:
                 break
 
+        self._similar_cache[cache_key] = [item.copy() for item in recommendations]
         return recommendations
 
     def recommend_complementary(self, current_food_ids: list[int], target_profile: dict, n: int = 10) -> list[dict]:

@@ -106,6 +106,69 @@ def attach_energy_balance_fields(profile: Dict[str, Any], age: int) -> Dict[str,
     return profile
 
 
+def _activity_rank(activity_level: str | None) -> int:
+    return {
+        "sedentary": 1,
+        "lightly active": 2,
+        "moderately active": 3,
+        "very active": 4,
+    }.get(str(activity_level or "").strip().lower(), 3)
+
+
+def _target_requires_snack(
+    daily_calorie_target: float | int | None,
+    dietary_restrictions: List[str] | None = None,
+    physical_activity_level: str | None = None,
+    budget_vnd_max: float | int | None = None,
+) -> bool:
+    target = _as_float(daily_calorie_target)
+    restrictions = {
+        str(item).strip().lower()
+        for item in (dietary_restrictions or [])
+        if str(item).strip()
+    }
+
+    if target >= 1600.0 and {"vegetarian", "vegan"}.intersection(restrictions):
+        return True
+    if target >= 2200.0 and restrictions:
+        return True
+
+    snack_threshold = 2400.0
+    if _activity_rank(physical_activity_level) >= 4:
+        snack_threshold = min(snack_threshold, 2200.0)
+    if target >= 2600.0:
+        snack_threshold = min(snack_threshold, 2200.0)
+    if _as_float(budget_vnd_max) and _as_float(budget_vnd_max) <= 70000.0:
+        snack_threshold = max(snack_threshold, 2400.0)
+
+    return target >= snack_threshold
+
+
+def _meal_plan_has_snack(meal_plan: List[Dict[str, Any]]) -> bool:
+    return any(
+        str(meal.get("meal_type") or "").lower() == "snack"
+        for day in (meal_plan or [])
+        for meal in day.get("meals", [])
+    )
+
+
+def _meal_plan_slot_shape_stale(
+    meal_plan: List[Dict[str, Any]],
+    daily_calorie_target: float | int | None,
+    dietary_restrictions: List[str] | None = None,
+    physical_activity_level: str | None = None,
+    budget_vnd_max: float | int | None = None,
+) -> bool:
+    if not meal_plan:
+        return True
+    return _meal_plan_has_snack(meal_plan) != _target_requires_snack(
+        daily_calorie_target,
+        dietary_restrictions,
+        physical_activity_level,
+        budget_vnd_max,
+    )
+
+
 class ForecastRequest(BaseModel):
     current_weight_kg: float = Field(..., ge=30, le=250, description="Current weight of the user in kg")
     height_cm: float = Field(..., ge=100, le=250, description="Height of the user in cm")
@@ -226,14 +289,14 @@ def _build_chat_meal_profile(
     entities: Dict[str, Any],
     message: str,
 ) -> Dict[str, Any]:
-    """Build the CSP profile for chat with message context taking priority.
+    """Build an isolated CSP profile for a one-off chat request.
 
-    Stored profile values are useful defaults, but a chat request is often a
-    one-off scenario such as "thực đơn chay 1800 kcal" or "giàu protein".
-    Explicit entities in the current message must therefore override profile
-    fields before KNN/CSP see the request.
+    The saved profile is intentionally not used as a fallback here. Chat meal
+    suggestions should depend on the current command only; fields not mentioned
+    by the user fall back to neutral defaults.
     """
-    profile = (base_profile or {}).copy()
+    _ = base_profile
+    profile: Dict[str, Any] = {}
     profile_updates = entities.get("profile_updates") or {}
 
     daily_target = (
@@ -243,12 +306,12 @@ def _build_chat_meal_profile(
     )
     if daily_target is not None:
         profile["daily_calorie_target"] = float(daily_target)
-    elif "daily_calorie_target" not in profile:
+    else:
         profile["daily_calorie_target"] = 2000.0
 
     if entities.get("budget_vnd") is not None:
         profile["budget_vnd_max"] = float(entities["budget_vnd"])
-    elif "budget_vnd_max" not in profile:
+    else:
         profile["budget_vnd_max"] = 200000.0
 
     if entities.get("health_goal") and entities.get("health_goal") != "unknown":
@@ -258,17 +321,19 @@ def _build_chat_meal_profile(
     if entities.get("allergies"):
         profile["allergies"] = entities["allergies"]
     else:
-        profile["allergies"] = profile.get("allergies") or []
+        profile["allergies"] = []
 
     if _message_requests_normal_diet(message):
         profile["dietary_restrictions"] = []
     elif entities.get("dietary_restrictions"):
         profile["dietary_restrictions"] = entities["dietary_restrictions"]
     else:
-        profile["dietary_restrictions"] = profile.get("dietary_restrictions") or []
+        profile["dietary_restrictions"] = []
 
     if profile_updates.get("physical_activity_level"):
         profile["physical_activity_level"] = profile_updates["physical_activity_level"]
+    else:
+        profile["physical_activity_level"] = "Moderately Active"
 
     profile["macro_ratios"] = _macro_ratios_for_chat_context(profile, entities)
     profile["exclude_snacks"] = True
@@ -901,7 +966,20 @@ def handle_save_profile(req: ProfileRequest) -> Dict[str, Any]:
                 or dietary_restrictions_changed
             )
         dietary_plan_invalid = _meal_plan_violates_dietary_restrictions(meal_plan, dietary_restrictions)
-        meal_plan_stale = req.force_meal_plan_refresh or meal_fields_changed or not meal_plan or dietary_plan_invalid
+        meal_slot_shape_stale = _meal_plan_slot_shape_stale(
+            meal_plan,
+            daily_calorie_target,
+            dietary_restrictions,
+            physical_activity_level,
+            budget_vnd_max,
+        )
+        meal_plan_stale = (
+            req.force_meal_plan_refresh
+            or meal_fields_changed
+            or not meal_plan
+            or dietary_plan_invalid
+            or meal_slot_shape_stale
+        )
         
         tdee = calculate_tdee(
             weight_kg=float(weight_kg),

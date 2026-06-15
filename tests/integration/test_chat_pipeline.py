@@ -147,3 +147,71 @@ def test_chat_suggest_meal_context_overrides_profile(monkeypatch):
     assert data["effective_profile"]["macro_ratios"]["protein"] >= 0.35
     assert captured["profile"]["daily_calorie_target"] == 1800.0
     assert captured["profile"]["dietary_restrictions"] == []
+
+
+def test_chat_suggest_meal_uses_isolated_defaults_when_context_omits_fields(monkeypatch):
+    """Saved profile restrictions must not leak into one-off chat meal requests."""
+    captured = {}
+
+    class FakeIntentEngine:
+        def predict_chat_intent(self, message):
+            return {
+                "status": "success",
+                "intent": "SUGGEST_MEAL",
+                "entities": {
+                    "calories": 3000,
+                    "allergies": ["hải sản"],
+                    "dietary_restrictions": [],
+                    "profile_updates": {
+                        "daily_calorie_target": 3000,
+                    },
+                },
+            }
+
+    class FakeMealPipeline:
+        def generate_meal_plan(self, profile):
+            captured["profile"] = profile
+            return {
+                "feasible": True,
+                "meal_plan": [{
+                    "day": 1,
+                    "meals": [{
+                        "meal_type": "lunch",
+                        "food_id": 1,
+                        "name": "Cơm + thịt bò + rau",
+                        "calories": 850,
+                        "protein": 45,
+                        "fat": 20,
+                        "carbs": 100,
+                        "total_cost_vnd": 45000,
+                    }],
+                }],
+            }
+
+    monkeypatch.setattr(main_module, "intent_engine", FakeIntentEngine())
+    monkeypatch.setattr(main_module, "meal_pipeline", FakeMealPipeline())
+
+    payload = {
+        "message": "Gợi ý thực đơn 3000 calo cho người dị ứng hải sản",
+        "user_profile": {
+            "daily_calorie_target": 1800,
+            "budget_vnd_max": 50000,
+            "allergies": ["trứng"],
+            "dietary_restrictions": ["vegan"],
+            "physical_activity_level": "Sedentary",
+            "macro_ratios": {"protein": 0.15, "fat": 0.30, "carbs": 0.55},
+        },
+    }
+    response = client.post("/api/v1/chat", json=payload)
+
+    assert response.status_code == 200
+    data = response.json()
+    effective_profile = data["effective_profile"]
+    assert effective_profile["daily_calorie_target"] == 3000.0
+    assert effective_profile["budget_vnd_max"] == 200000.0
+    assert effective_profile["allergies"] == ["hải sản"]
+    assert effective_profile["dietary_restrictions"] == []
+    assert effective_profile["physical_activity_level"] == "Moderately Active"
+    assert captured["profile"]["budget_vnd_max"] == 200000.0
+    assert captured["profile"]["dietary_restrictions"] == []
+    assert captured["profile"]["allergies"] == ["hải sản"]

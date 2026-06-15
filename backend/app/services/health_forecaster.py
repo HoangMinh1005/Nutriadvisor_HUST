@@ -58,6 +58,33 @@ class HealthForecaster:
             feature_importance[telemetry_key] = round(float(imp), 4)
         return feature_importance
 
+    @staticmethod
+    def _activity_multiplier(activity: str | None) -> float | None:
+        return {
+            "sedentary": 1.2,
+            "lightly active": 1.375,
+            "moderately active": 1.55,
+            "very active": 1.725,
+        }.get(str(activity or "").strip().lower())
+
+    def _surplus_for_activity(
+        self,
+        calories: float,
+        current_surplus: float,
+        current_activity: str,
+        next_activity: str,
+    ) -> float:
+        """Recompute surplus when activity changes, using current TDEE as the anchor."""
+        current_multiplier = self._activity_multiplier(current_activity)
+        next_multiplier = self._activity_multiplier(next_activity)
+        current_maintenance = calories - current_surplus
+        if not current_multiplier or not next_multiplier or current_maintenance <= 0.0:
+            return current_surplus
+
+        estimated_bmr = current_maintenance / current_multiplier
+        next_maintenance = estimated_bmr * next_multiplier
+        return calories - next_maintenance
+
     def _personalized_feature_importance(
         self,
         calories: float,
@@ -110,10 +137,19 @@ class HealthForecaster:
                 sleep_impact = max(sleep_impact, abs(predict_with({"Sleep_encoded": value}) - base_change))
 
         activity_impact = 0.0
-        for value in self.activity_mapping.values():
+        for activity_label, value in self.activity_mapping.items():
             value = float(value)
             if value != float(activity_encoded):
-                activity_impact = max(activity_impact, abs(predict_with({"Activity_encoded": value}) - base_change))
+                next_surplus = self._surplus_for_activity(
+                    calories,
+                    surplus,
+                    activity,
+                    str(activity_label),
+                )
+                activity_impact = max(activity_impact, abs(predict_with({
+                    "Activity_encoded": value,
+                    "Daily Caloric Surplus/Deficit": next_surplus,
+                }) - base_change))
 
         sleep_penalty = {
             "Poor": 1.25,

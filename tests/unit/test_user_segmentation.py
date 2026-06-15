@@ -353,6 +353,42 @@ class TestSegmentPolicies:
         assert policy["enable_snack_from_kcal"] == 1600.0
         assert policy["diversity_penalty_weight"] <= 0.45
         assert policy["macro_stability_weight"] >= 1.3
+        assert policy["csp_time_budget_seconds"] >= 6.0
+
+    def test_restricted_non_plant_policy_gets_extra_csp_time(self):
+        user = UserProfile(
+            user_id=1,
+            age=25,
+            weight_kg=70,
+            height_cm=170,
+            daily_calorie_target=1800,
+            health_goal="maintenance",
+            physical_activity_level="Moderately Active",
+            dietary_restrictions=["halal"],
+        )
+
+        policy = get_segment_policy("balanced_lifestyle", user)
+
+        assert policy["plant_protein_as_core"] is False
+        assert policy["policy_name"] == "restricted_balanced"
+        assert policy["csp_time_budget_seconds"] >= 4.5
+
+    def test_normal_diet_keeps_default_csp_time(self):
+        user = UserProfile(
+            user_id=1,
+            age=25,
+            weight_kg=70,
+            height_cm=170,
+            daily_calorie_target=1800,
+            health_goal="maintenance",
+            physical_activity_level="Moderately Active",
+            dietary_restrictions=[],
+        )
+
+        policy = get_segment_policy("balanced_lifestyle", user)
+
+        assert policy["policy_name"] == "balanced_lifestyle"
+        assert policy["csp_time_budget_seconds"] == 3.0
 
     def test_apply_segment_policy_to_csp_profile(self):
         user = UserProfile(

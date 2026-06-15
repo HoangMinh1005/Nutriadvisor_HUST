@@ -105,19 +105,20 @@ def get_segment_policy(segment_name: str, user: UserProfile) -> Dict[str, Any]:
             "diversity_penalty_weight": min(float(policy["diversity_penalty_weight"]), 0.45),
             "enable_snack_from_kcal": min(float(policy["enable_snack_from_kcal"]), 1600.0),
             "plant_protein_as_core": True,
-            "csp_time_budget_seconds": max(float(policy["csp_time_budget_seconds"]), 7.0 if daily_target >= 2200.0 else 5.0),
+            "csp_time_budget_seconds": max(float(policy["csp_time_budget_seconds"]), 8.0 if daily_target >= 2200.0 else 6.0),
             "calorie_tolerance_pct": max(float(policy["calorie_tolerance_pct"]), 0.18 if daily_target >= 2200.0 else 0.15),
             "macro_tolerance_pct": max(float(policy["macro_tolerance_pct"]), 0.22 if daily_target >= 2200.0 else 0.18),
         })
-    elif restrictions and daily_target >= 2200.0:
+    elif restrictions:
         policy = _merge_policy(policy, {
-            "policy_name": "restricted_high_calorie_distribution",
+            "policy_name": "restricted_high_calorie_distribution" if daily_target >= 2200.0 else "restricted_balanced",
             "macro_stability_weight": max(float(policy["macro_stability_weight"]), 1.15),
-            "enable_snack_from_kcal": min(float(policy["enable_snack_from_kcal"]), 2200.0),
-            "csp_time_budget_seconds": max(float(policy["csp_time_budget_seconds"]), 5.0),
-            "calorie_tolerance_pct": max(float(policy["calorie_tolerance_pct"]), 0.15),
-            "macro_tolerance_pct": max(float(policy["macro_tolerance_pct"]), 0.15),
+            "csp_time_budget_seconds": max(float(policy["csp_time_budget_seconds"]), 6.0 if daily_target >= 2200.0 else 4.5),
+            "calorie_tolerance_pct": max(float(policy["calorie_tolerance_pct"]), 0.15 if daily_target >= 2200.0 else 0.14),
+            "macro_tolerance_pct": max(float(policy["macro_tolerance_pct"]), 0.15 if daily_target >= 2200.0 else 0.14),
         })
+        if daily_target >= 2200.0:
+            policy["enable_snack_from_kcal"] = min(float(policy["enable_snack_from_kcal"]), 2200.0)
 
     if daily_target >= 2600.0:
         policy = _merge_policy(policy, {
