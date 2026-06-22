@@ -394,6 +394,47 @@ def test_high_calorie_vegan_plan_remains_feasible_with_limited_plant_proteins():
     assert all(any(meal["meal_type"] == "snack" for meal in day["meals"]) for day in result["meal_plan"])
 
 
+def test_high_calorie_plant_based_snack_can_have_multiple_items():
+    random.seed(42)
+    foods = [
+        {"food_id": 1, "canonical_name_en": "Bread", "name_vi": "bánh mì", "calories": 265, "protein": 9, "fat": 3.2, "carbs": 49, "cost_vnd_100g": 5000, "category": "tinh_bột"},
+        {"food_id": 2, "canonical_name_en": "Rice", "name_vi": "cơm trắng", "calories": 130, "protein": 2.7, "fat": 0.3, "carbs": 28, "cost_vnd_100g": 1800, "category": "tinh_bột"},
+        {"food_id": 3, "canonical_name_en": "Tofu", "name_vi": "đậu phụ luộc", "calories": 76, "protein": 8, "fat": 4.8, "carbs": 1.9, "cost_vnd_100g": 5000, "category": "hạt_các_loại"},
+        {"food_id": 4, "canonical_name_en": "Spinach", "name_vi": "rau bó xôi", "calories": 23, "protein": 2.9, "fat": 0.4, "carbs": 3.6, "cost_vnd_100g": 4000, "category": "rau_xanh"},
+        {"food_id": 5, "canonical_name_en": "Banana", "name_vi": "chuối", "calories": 89, "protein": 1.1, "fat": 0.3, "carbs": 22.8, "cost_vnd_100g": 2000, "category": "trái_cây"},
+        {"food_id": 6, "canonical_name_en": "Peanuts", "name_vi": "lạc rang", "calories": 567, "protein": 25.8, "fat": 49.2, "carbs": 16.1, "cost_vnd_100g": 9000, "category": "hạt_các_loại"},
+    ]
+    user = {
+        "daily_calorie_target": 2500,
+        "macro_ratios": {"protein": 0.22, "fat": 0.28, "carbs": 0.50},
+        "budget_vnd_max": 200000,
+        "exclude_snacks": True,
+        "dietary_restrictions": ["vegan"],
+        "plant_protein_as_core": True,
+    }
+    scheduler = MealScheduler(user_profile=user, available_foods=foods, db_url="")
+    constraints = NutrientConstraints(
+        daily_calorie_target=2500.0,
+        macro_ratios=user["macro_ratios"],
+        budget_vnd_max=user["budget_vnd_max"],
+    )
+
+    day_meals = scheduler._get_meal_plan_for_solution(
+        {"breakfast": 1, "lunch": 3, "dinner": 3, "snack": 5},
+        constraints,
+        1.0,
+        all_carbs=[foods[1]],
+        all_proteins=[foods[2]],
+        all_fibers=[foods[3]],
+        all_snacks=[foods[4], foods[5]],
+        day_excluded_ids=None,
+    )
+
+    snack = next(meal for meal in day_meals if meal["meal_type"] == "snack")
+    assert len(snack["components"]) == 2
+    assert {component["food_id"] for component in snack["components"]} == {5, 6}
+
+
 def test_che_exclusion_and_suffix_stripping():
     from csp.scheduler import get_dynamic_tags, MealScheduler
     from csp.constraints import NutrientConstraints
