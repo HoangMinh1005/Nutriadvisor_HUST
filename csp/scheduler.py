@@ -894,7 +894,24 @@ class MealScheduler:
         daily_target = float(self.user.get("daily_calorie_target") or 1800.0)
         exclude_snacks = self._effective_exclude_snacks(daily_target)
         if not exclude_snacks and sol.get("snack"):
-            components.append({"slot": "snack", "food": self.food_by_id[sol["snack"]], "role": "snack"})
+            primary_snack = self.food_by_id[sol["snack"]]
+            components.append({"slot": "snack", "food": primary_snack, "role": "snack"})
+            excluded_ids.add(primary_snack["food_id"])
+
+            dietary_restrictions = {
+                str(r).strip().lower()
+                for r in (self.user.get("dietary_restrictions") or [])
+                if str(r).strip()
+            }
+            allow_multi_item_snack = (
+                daily_target > 2400.0
+                and {"vegetarian", "vegan"}.intersection(dietary_restrictions)
+            )
+            if allow_multi_item_snack and all_snacks:
+                extra_snack = get_complementary(all_snacks, excluded_ids)
+                if extra_snack and int(extra_snack["food_id"]) != int(primary_snack["food_id"]):
+                    components.append({"slot": "snack", "food": extra_snack, "role": "snack_extra"})
+                    excluded_ids.add(extra_snack["food_id"])
 
         if daily_target <= 1200.0:
             w_prot_space = [70.0, 100.0, 150.0]
